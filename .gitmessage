@@ -1,0 +1,8 @@
+# <type>(<scope>): <subject>
+#   type:    feat fix docs style refactor perf test build ci chore revert
+#   scope:   threatscan hardening-check cve-check migration-validate repo docs
+#   subject: imperative, lowercase, no period, max 72 chars
+#
+# Body: what changed and why, wrapped at 72 chars. Skip if the subject says it all.
+#
+# Footer: BREAKING CHANGE: ..., Refs: #123, Closes: #123

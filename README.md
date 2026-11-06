@@ -62,3 +62,7 @@ sudo bash cve-check/cve-check.sh --severity HIGH
 ```
 
 The three audit scripts are read-only; `threatscan` only modifies files when `--quarantine` is given. Root is needed for full check coverage.
+
+## Commit conventions
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/); the format, allowed types and scopes are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
