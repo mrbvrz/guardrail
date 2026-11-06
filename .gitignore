@@ -1,3 +1,6 @@
+# Client engagement deliverables (never publish)
+engagements/
+
 # Runtime output from the audit tools
 logs/
 reports/
