@@ -1,0 +1,15 @@
+# Scanner runtime artifacts
+logs/
+reports/
+quarantine/
+*.part.*
+*.quarantined
+*.meta.json
+
+# YARA build artifacts
+*.yarc
+*.index
+
+# OS / editor / tooling
+.DS_Store
+.mimocode/
