@@ -145,6 +145,17 @@ check() {
 }
 
 # ---------- Helpers ----------
+# Escape a value for embedding in a JSON string literal (bash builtins only).
+json_esc() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
 have() { command -v "$1" >/dev/null 2>&1; }
 is_root() { [ "$(id -u)" -eq 0 ]; }
 # timeout wrapper (GNU timeout; plain run if absent)
@@ -1349,7 +1360,7 @@ print_report() {
       [ $first -eq 0 ] && printf ','
       first=0
       printf '{"id":"%s","section":"%s","severity":"%s","status":"%s","message":"%s"}' \
-        "${F_ID[$i]}" "${F_SECTION[$i]}" "${F_SEV[$i]}" "${F_STAT[$i]}" "${F_MSG[$i]//\"/\\\"}"
+        "${F_ID[$i]}" "${F_SECTION[$i]}" "${F_SEV[$i]}" "${F_STAT[$i]}" "$(json_esc "${F_MSG[$i]}")"
     done
     printf ']}\n'
     [ "$crit_high_fail" -gt 0 ] && return 1 || return 0

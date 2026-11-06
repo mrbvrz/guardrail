@@ -1,6 +1,7 @@
-# Scanner runtime artifacts
+# Runtime output from the audit tools
 logs/
 reports/
+result/
 quarantine/
 *.part.*
 *.quarantined

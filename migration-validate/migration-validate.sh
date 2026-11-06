@@ -28,6 +28,7 @@ HOST="${HOST:-}"
 SRC="${SRC:-}"
 DST="${DST:-}"
 FOLDERS=()
+CLI_FOLDERS=()
 DEEP=0
 SERVER=""
 LIST=0
@@ -139,6 +140,12 @@ load_profile() {
   done
 }
 
+# CLI folders win over the profile list; empty CLI list keeps the profile.
+merge_cli_folders() {
+  [ ${#CLI_FOLDERS[@]} -gt 0 ] || return 0
+  FOLDERS=("${CLI_FOLDERS[@]}")
+}
+
 list_profiles() {
   if [ ! -r "$CONFIG" ]; then
     echo "Config not found: $CONFIG" >&2
@@ -181,6 +188,14 @@ EOF
   _t "${FOLDERS[*]:-}" 'a b=c d' 'config: folder (spaces trimmed)'
   _t "$(spec_dst "${FOLDERS[1]:-}")" 'c' 'config: mapping folder'
 
+  # CLI folder list must survive load_profile (regression: it used to be wiped)
+  FOLDERS=(a b c); CLI_FOLDERS=(x y)
+  merge_cli_folders
+  _t "${FOLDERS[*]}" 'x y' 'CLI folders override profile folders'
+  FOLDERS=(a b c); CLI_FOLDERS=()
+  merge_cli_folders
+  _t "${FOLDERS[*]}" 'a b c' 'profile folders kept without CLI folders'
+
   rm -f "$tmp"
   [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
   return $fail
@@ -197,9 +212,9 @@ while [ $# -gt 0 ]; do
     --color)     FORCE_COLOR=1; shift ;;
     --output|-o) OUTPUT_FILE="${2:-}"; [ -z "$OUTPUT_FILE" ] && { echo "Output filename required"; exit 2; }; shift 2 ;;
     -h|--help)   usage; exit 0 ;;
-    --)          shift; while [ $# -gt 0 ]; do FOLDERS+=("$1"); shift; done ;;
+    --)          shift; while [ $# -gt 0 ]; do CLI_FOLDERS+=("$1"); shift; done ;;
     -*)          echo "Unknown option: $1" >&2; usage; exit 2 ;;
-    *)           FOLDERS+=("$1"); shift ;;
+    *)           CLI_FOLDERS+=("$1"); shift ;;
   esac
 done
 
@@ -235,6 +250,10 @@ if [ -n "$SERVER" ]; then
   load_profile "$SERVER" || exit 2
 fi
 
+# Folders named on the command line override the profile's folder list
+# (load_profile replaces FOLDERS, so the CLI list is kept aside until here).
+merge_cli_folders
+
 [ -n "$ENV_HOST" ] && HOST=$ENV_HOST
 [ -n "$ENV_SRC" ]  && SRC=$ENV_SRC
 [ -n "$ENV_DST" ]  && DST=$ENV_DST
@@ -258,6 +277,9 @@ if [ -z "$OUTPUT_FILE" ]; then
   TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
   SERVER_TAG="${SERVER:-manual}"
   OUTPUT_FILE="$OUT_DIR/migration-${SERVER_TAG}-${TIMESTAMP}.log"
+else
+  # Custom -o path: make sure the parent directory exists before tee opens it
+  mkdir -p "$(dirname "$OUTPUT_FILE")" 2>/dev/null || true
 fi
 
 # Setup logging: write to both terminal and file
