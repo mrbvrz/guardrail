@@ -282,13 +282,18 @@ else
   mkdir -p "$(dirname "$OUTPUT_FILE")" 2>/dev/null || true
 fi
 
+# Remember whether stdout was a terminal before the tee redirect below: the
+# redirect turns fd 1 into a pipe, which makes a later [ -t 1 ] always false.
+STDOUT_IS_TTY=0
+if [ -t 1 ]; then STDOUT_IS_TTY=1; fi
+
 # Setup logging: write to both terminal and file
 exec > >(tee -a "$OUTPUT_FILE") 2>&1
 echo "Output log: $OUTPUT_FILE"
 echo
 
-# Color setup
-if [ -t 1 ] || [ $FORCE_COLOR -eq 1 ]; then
+# Color setup (based on the pre-redirect TTY check)
+if [ "$STDOUT_IS_TTY" -eq 1 ] || [ $FORCE_COLOR -eq 1 ]; then
   G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'
 else
   G=''; R=''; Y=''; B=''; N=''
