@@ -17,3 +17,6 @@ quarantine/
 # OS / editor / tooling
 .DS_Store
 .mimocode/
+
+# Local server profiles (real host addresses stay out of the repo)
+**/profiles.conf

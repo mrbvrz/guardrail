@@ -17,7 +17,7 @@
 # srv2|user@10.0.0.2|/home/user/public_html|/var/www/html|public_html=web
 # srv3|user@10.0.0.3|/opt/app|/opt/app|data,logs,config
 
-# --- Current profiles for DPMPTSP Pekanbaru migration ---
+# --- Active profiles (host addresses are kept out of version control) ---
 srv1|root@REPLACE-IP|/home/simpel/public_html|/var/www/html|simpel3,mobile,simpel2,simpel3_api,surat
 srv2|root@REPLACE-IP|/home/perizinan|/var/www/html|public_html=perizinan
 srv3|root@REPLACE-IP|/home/simpel/public_html|/var/www/html|web
