@@ -17,6 +17,12 @@ quarantine_file() {
     local quarantine_name="${rel_file//\//_}.${timestamp}.quarantined"
     local quarantine_path="${QUARANTINE_DIR}/${quarantine_name}"
     
+    # Calculate hash and size before moving/zipping the file
+    local file_hash file_size iso_date
+    file_hash=$(get_file_hash "$file")
+    file_size=$(get_file_size "$file")
+    iso_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")
+
     # Create quarantine directory structure
     mkdir -p "$(dirname "$quarantine_path")"
     
@@ -44,9 +50,9 @@ quarantine_file() {
     "severity": "$severity",
     "reason": "$(json_escape "$reason")",
     "scan_id": $scan_id,
-    "timestamp": "$(date -Iseconds)",
-    "hash": "$(get_file_hash "$file")",
-    "size": $(get_file_size "$file"),
+    "timestamp": "$iso_date",
+    "hash": "$file_hash",
+    "size": $file_size,
     "password_protected": $([ -n "$QUARANTINE_PASSWORD" ] && echo true || echo false)
 }
 METAEOF

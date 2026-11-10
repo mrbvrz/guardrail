@@ -24,6 +24,7 @@ AUTO_YES=false
 SCAN_TARGETS=()
 SCAN_TARGET_SLUG=""
 LAST_SCAN_EXIT_CODE=0
+SELF_TEST=false
 CONFIG_FILE=""
 YARA_RULES_DIRS=()
 YARA_COMPILED=""
@@ -191,6 +192,7 @@ Config & Threat Intel:
 
 Utility:
   --check-deps           Check dependencies and exit
+  --self-test            Run internal verification tests without touching servers
   -h, --help             Show this help
 
 Exit Codes:
@@ -393,6 +395,10 @@ parse_args() {
                 CHECK_DEPS=true
                 shift
                 ;;
+            --self-test)
+                SELF_TEST=true
+                shift
+                ;;
             -i|--discover|--interactive)
                 DISCOVER_MODE=true
                 shift
@@ -502,6 +508,101 @@ parse_json_config() {
         FAIL_ON=$(jq -r '.output.fail_on // empty' "$file" 2>/dev/null || echo "$FAIL_ON")
         QUARANTINE_DIR=$(jq -r '.quarantine.directory // empty' "$file" 2>/dev/null || echo "$QUARANTINE_DIR")
     fi
+}
+
+# ============================================================================
+# SELF TEST
+# ============================================================================
+self_test() {
+    local fail=0 tmp_dir
+    _t() {
+        if [[ "$1" == "$2" ]]; then
+            echo "ok   $3"
+        else
+            echo "FAIL $3 (got '$1', want '$2')"
+            fail=1
+        fi
+    }
+
+    echo "Running ThreatScan self-test..."
+
+    # 1. Helpers & format conversions
+    _t "$(parse_size "10MB")" "10485760" "parse_size 10MB"
+    _t "$(parse_size "1GB")" "1073741824" "parse_size 1GB"
+    _t "$(float_gt 7.5 7.0 && echo yes || echo no)" "yes" "float_gt helper"
+    _t "$(float_lt 5.0 6.0 && echo yes || echo no)" "yes" "float_lt helper"
+
+    # 2. Shannon Entropy calculation
+    local low_ent high_ent
+    low_ent=$(calculate_entropy "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    high_ent=$(calculate_entropy "8f4k2Lm9Pq0VxZaBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890+/==")
+    _t "$(float_lt "$low_ent" 1.0 && echo yes || echo no)" "yes" "calculate_entropy low for uniform string"
+    _t "$(float_gt "$high_ent" 4.0 && echo yes || echo no)" "yes" "calculate_entropy high for random base64 string"
+
+    # 3. Temporary sandbox for scanner & discovery tests
+    tmp_dir=$(mktemp -d) || return 1
+    local old_root="$PROJECT_ROOT"
+    PROJECT_ROOT="$tmp_dir"
+
+    # Benign PHP vs webshell heuristics
+    echo '<?php echo "Hello World"; ?>' > "$tmp_dir/clean.php"
+    local clean_heur clean_score
+    clean_heur=$(analyze_heuristics "$tmp_dir/clean.php")
+    clean_score=$(echo "$clean_heur" | jq -r '.score // 0')
+    _t "$clean_score" "0" "heuristics on benign PHP file has score 0"
+
+    echo '<?php eval($_POST["cmd"]); ?>' > "$tmp_dir/shell.php"
+    local shell_heur shell_score
+    shell_heur=$(analyze_heuristics "$tmp_dir/shell.php")
+    shell_score=$(echo "$shell_heur" | jq -r '.score // 0')
+    _t "$( [[ $shell_score -ge 50 ]] && echo yes || echo no )" "yes" "heuristics on eval(\$_POST['cmd']) flags high risk"
+
+    # 4. Malicious .htaccess detection
+    echo 'php_value auto_prepend_file "backdoor.php"' > "$tmp_dir/.htaccess"
+    local htaccess_sig
+    htaccess_sig=$(run_signature_detection "$(cat "$tmp_dir/.htaccess")" "$tmp_dir/.htaccess")
+    _t "$(echo "$htaccess_sig" | jq -r 'map(select(.type == "malicious_config_directive")) | length > 0')" "true" "detects malicious .htaccess auto_prepend_file"
+
+    # 5. Framework & Project Discovery
+    mkdir -p "$tmp_dir/app-laravel" "$tmp_dir/app-wp/wp-includes"
+    echo '{"name":"laravel/app"}' > "$tmp_dir/app-laravel/composer.json"
+    echo '<?php // artisan' > "$tmp_dir/app-laravel/artisan"
+    echo '<?php // wp' > "$tmp_dir/app-wp/wp-config.php"
+
+    _t "$(detect_app_type "$tmp_dir/app-laravel")" "Laravel" "detect_app_type detects Laravel"
+    _t "$(detect_app_type "$tmp_dir/app-wp")" "WordPress" "detect_app_type detects WordPress"
+
+    # Subproject expansion
+    DISCOVERED_PATHS=(); DISCOVERED_SOURCES=(); DISCOVERED_TYPES=(); DISCOVERED_COUNTS=()
+    expand_web_subprojects "$tmp_dir" "test"
+    _t "${#DISCOVERED_PATHS[@]}" "2" "expand_web_subprojects detects 2 distinct projects"
+
+    # 6. Quarantine & Restore
+    local q_dir="$tmp_dir/quarantine"
+    mkdir -p "$q_dir"
+    local old_q_dir="${QUARANTINE_DIR:-}"
+    QUARANTINE_DIR="$q_dir"
+    local q_path
+    q_path=$(quarantine_file "$tmp_dir/shell.php" "CRITICAL" "Self-test malicious file" 12345)
+    _t "$( [[ -f "$q_path" ]] && echo yes || echo no )" "yes" "quarantine_file isolates target"
+    _t "$( [[ ! -f "$tmp_dir/shell.php" ]] && echo yes || echo no )" "yes" "quarantine_file removes original"
+    _t "$(jq -r '.hash' "${q_path}.meta.json" 2>/dev/null | grep -q '^[a-f0-9]\{64\}$' && echo yes || echo no)" "yes" "quarantine metadata records SHA256 hash"
+
+    restore_from_quarantine "$q_path" >/dev/null 2>&1
+    _t "$( [[ -f "$tmp_dir/shell.php" ]] && echo yes || echo no )" "yes" "restore_from_quarantine restores original file"
+
+    # Cleanup
+    rm -rf "$tmp_dir"
+    PROJECT_ROOT="$old_root"
+    QUARANTINE_DIR="$old_q_dir"
+
+    echo
+    if [[ $fail -eq 0 ]]; then
+        echo "ALL TESTS PASSED"
+    else
+        echo "SOME TESTS FAILED"
+    fi
+    return $fail
 }
 
 # ============================================================================
@@ -754,6 +855,12 @@ main() {
     # Load config
     load_config
     
+    # Self-test
+    if [[ "$SELF_TEST" == "true" ]]; then
+        self_test
+        exit $?
+    fi
+
     # Check deps
     if [[ "$CHECK_DEPS" == "true" ]]; then
         check_dependencies

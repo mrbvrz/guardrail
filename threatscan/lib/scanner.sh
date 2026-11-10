@@ -82,22 +82,50 @@ should_scan_file() {
     # Whitelist check
     is_whitelisted "$file" && return 1
     
-    # Text file check
-    is_text_file "$file" || return 1
+    local filename="${file##*/}"
+    local filename_lower
+    filename_lower=$(echo "$filename" | tr '[:upper:]' '[:lower:]')
     
+    # Critical web configuration files often abused for backdoors/prepends
+    case "$filename_lower" in
+        .htaccess|.user.ini)
+            return 0
+            ;;
+    esac
+
+    # Polyglot or double-extension web execution tricks (e.g. avatar.php.jpg, shell.phtml.png)
+    case "$filename_lower" in
+        *.php.*|*.phtml.*|*.phar.*|*.shtml.*)
+            return 0
+            ;;
+    esac
+
     # Extension check (web-accessible extensions)
     local ext="${file##*.}"
-    local ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+    local ext_lower
+    ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
     
     # PHP and web extensions
     case "$ext_lower" in
-        php|phtml|php3|php4|php5|php7|php8|phps|php-s|inc|module|theme|tpl|html|htm|js|css|json|xml|yaml|yml|txt|md)
+        php|phtml|php3|php4|php5|php7|php8|phps|php-s|phar|pht|pgif|shtml|inc|module|theme|tpl|html|htm|js|css|json|xml|yaml|yml|txt|md|sql)
+            is_text_file "$file" || return 1
             return 0
             ;;
     esac
     
-    # No extension but might be PHP
-    [[ "$ext" == "$file" ]] && return 0
+    # Files without extension: check if text
+    if [[ "$ext" == "$file" ]]; then
+        is_text_file "$file" && return 0
+    fi
+
+    # Image / media files: check for polyglot webshell (embedded PHP tags)
+    case "$ext_lower" in
+        jpg|jpeg|png|gif|bmp|webp|ico|svg|pdf)
+            if head -c 8192 "$file" 2>/dev/null | grep -q -E '<\?(php|=)'; then
+                return 0
+            fi
+            ;;
+    esac
     
     return 1
 }

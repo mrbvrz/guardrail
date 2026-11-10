@@ -192,14 +192,17 @@ scan_single_file() {
     finding_json=$(echo "$finding_json" | jq --argjson yara "$yara_json" '. + {yara_matches: $yara}')
 
     # Entropy analysis
-    local entropy_results overall_entropy max_entropy b64_max_entropy sections_json
-    entropy_results=$(scan_entropy "$file" 2>/dev/null) || entropy_results="0.0000|0.0000|0.0000|[]"
-    IFS='|' read -r overall_entropy max_entropy b64_max_entropy sections_json <<< "$entropy_results"
-    overall_entropy="${overall_entropy:-0}"
-    max_entropy="${max_entropy:-0}"
-    b64_max_entropy="${b64_max_entropy:-0}"
-    sections_json="${sections_json:-[]}"
-    [[ "$sections_json" == \[*\] ]] || sections_json="[]"
+    local overall_entropy=0 max_entropy=0 b64_max_entropy=0 sections_json="[]"
+    if [[ "${SIGNATURES_ONLY:-false}" != "true" && "${QUICK_MODE:-false}" != "true" ]]; then
+        local entropy_results
+        entropy_results=$(scan_entropy "$file" 2>/dev/null) || entropy_results="0.0000|0.0000|0.0000|[]"
+        IFS='|' read -r overall_entropy max_entropy b64_max_entropy sections_json <<< "$entropy_results"
+        overall_entropy="${overall_entropy:-0}"
+        max_entropy="${max_entropy:-0}"
+        b64_max_entropy="${b64_max_entropy:-0}"
+        sections_json="${sections_json:-[]}"
+        [[ "$sections_json" == \[*\] ]] || sections_json="[]"
+    fi
 
     finding_json=$(echo "$finding_json" | jq \
         --argjson overall "$overall_entropy" \
@@ -209,10 +212,11 @@ scan_single_file() {
         '. + {entropy: {overall: $overall, max: $max, b64_max: $b64, sections: $sections}}')
 
     # Heuristic analysis
-    local heuristic_results heur_json
-    heuristic_results=$(analyze_heuristics "$file")
-    heur_json="$heuristic_results"
-    [[ -z "$heur_json" ]] && heur_json='{"score":0,"signals":{}}'
+    local heur_json='{"score":0,"signals":{}}'
+    if [[ "${SIGNATURES_ONLY:-false}" != "true" ]]; then
+        heur_json=$(analyze_heuristics "$file")
+        [[ -z "$heur_json" ]] && heur_json='{"score":0,"signals":{}}'
+    fi
     finding_json=$(echo "$finding_json" | jq --argjson heur "$heur_json" \
         '. + {heuristics: $heur.signals, heuristic_score: $heur.score}')
 
@@ -376,6 +380,20 @@ run_signature_detection() {
             results+=("{\"type\":\"suspicious_filename\",\"name\":\"$basename_file\",\"severity\":\"CRITICAL\"}")
         fi
     done
+
+    # Dangerous .htaccess / .user.ini directives
+    if [[ "$basename_lower" == ".htaccess" || "$basename_lower" == ".user.ini" ]]; then
+        if echo "$content" | grep -qiE '(auto_prepend_file|auto_append_file|allow_url_include|SetHandler.*application/x-httpd-php|AddType.*application/x-httpd-php|AddHandler.*application/x-httpd-php)'; then
+            results+=("{\"type\":\"malicious_config_directive\",\"file\":\"$basename_file\",\"severity\":\"CRITICAL\"}")
+        fi
+    fi
+
+    # Double extension disguised executable (e.g. avatar.php.jpg, shell.phtml.png)
+    case "$basename_lower" in
+        *.php.*|*.phtml.*|*.phar.*|*.shtml.*)
+            results+=("{\"type\":\"double_extension_webshell\",\"name\":\"$basename_file\",\"severity\":\"HIGH\"}")
+            ;;
+    esac
 
     # Output as JSON array
     if [[ ${#results[@]} -eq 0 ]]; then

@@ -18,6 +18,7 @@
 
 | Tool | Category | Key Capabilities |
 | :--- | :--- | :--- |
+| 🛡️ **[`guardrail.sh`](guardrail.sh)** | **Unified Orchestrator** | Master CLI orchestrator with an interactive launcher, unified dependency checks, and automated cross-suite verification. |
 | 🔄 **[`migration-validate/`](migration-validate/README.md)** | **Data Integrity** | Validate `rsync` migration accuracy per folder using multi-server profiles, file/symlink/byte counters, deep SHA checksums, and TUI progress bars. |
 | 🔒 **[`hardening-check/`](hardening-check/README.md)** | **System Hardening** | Cross-distro security audit & scoring across SSH, Firewall, Web Server, TLS/SSL, PHP, Database, Password Policy, and Kernel parameters with baseline diffing. |
 | 🔍 **[`cve-check/`](cve-check/README.md)** | **Vulnerability Audit** | Offline-first CVE exposure assessment via curated advisory rules, native distro security feeds (`apt`/`dnf`/`yum`), and optional OSV API lookups. |
@@ -46,7 +47,12 @@
 Run the built-in self-tests before starting a maintenance window (safe, read-only, touches no production files):
 
 ```bash
-bash threatscan/threatscan.sh --check-deps
+# Verify entire suite with one command
+./guardrail.sh self-test
+./guardrail.sh --check-deps
+
+# Or verify individually:
+bash threatscan/threatscan.sh --self-test
 bash cve-check/cve-check.sh --self-test
 bash hardening-check/hardening-check.sh --self-test
 bash migration-validate/migration-validate.sh --self-test
