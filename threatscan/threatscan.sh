@@ -14,7 +14,16 @@ CONFIG_DIR="${SCRIPT_DIR}/config"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 LOGS_DIR="${SCRIPT_DIR}/logs"
 
-PROJECT_ROOT="${1:-.}"
+PROJECT_ROOT="."
+CLI_PATH_GIVEN=false
+DISCOVER_MODE=false
+LIST_TARGETS=false
+ALL_TARGETS=false
+NO_SUBPROJECTS=false
+AUTO_YES=false
+SCAN_TARGETS=()
+SCAN_TARGET_SLUG=""
+LAST_SCAN_EXIT_CODE=0
 CONFIG_FILE=""
 YARA_RULES_DIRS=()
 YARA_COMPILED=""
@@ -76,7 +85,7 @@ DIM='\033[2m'
 # ============================================================================
 # LOAD LIBRARIES
 # ============================================================================
-for lib in utils scanner yara entropy heuristic git quarantine output batch; do
+for lib in utils discovery scanner yara entropy heuristic git quarantine output batch; do
     if [[ -f "${LIB_DIR}/${lib}.sh" ]]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${lib}.sh"
@@ -116,7 +125,14 @@ print_usage() {
 Usage: $0 [DIRECTORY] [OPTIONS]
 
 Arguments:
-  DIRECTORY              Path to scan (default: current directory)
+  DIRECTORY              Path to scan (default: auto-discover web folders or current directory)
+
+Target Discovery Options:
+  -i, --discover         Auto-discover web folders on system and prompt selection
+  --list-targets         List discovered web folders (system-wide or under DIRECTORY) and exit
+  --all-targets          Scan all discovered web projects sequentially without prompting
+  --no-subprojects       Scan DIRECTORY directly as a single root without sub-folder prompt
+  -y, --yes              Skip interactive confirmation prompts
 
 Detection Options:
   --yara-rules DIRS      YARA rules directories (comma-separated)
@@ -377,6 +393,26 @@ parse_args() {
                 CHECK_DEPS=true
                 shift
                 ;;
+            -i|--discover|--interactive)
+                DISCOVER_MODE=true
+                shift
+                ;;
+            --list-targets)
+                LIST_TARGETS=true
+                shift
+                ;;
+            --all-targets)
+                ALL_TARGETS=true
+                shift
+                ;;
+            --no-subprojects)
+                NO_SUBPROJECTS=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
             -v|--verbose)
                 VERBOSE=true
                 shift
@@ -392,6 +428,7 @@ parse_args() {
                 ;;
             *)
                 PROJECT_ROOT="$1"
+                CLI_PATH_GIVEN=true
                 shift
                 ;;
         esac
@@ -685,10 +722,10 @@ run_scan() {
     log "DEBUG" "output_results returned"
     status "${CYAN}${BOLD}[5/5]${NC} Done in $(format_duration "$duration")"
     
-    # Determine exit code
-    log "DEBUG" "Calling determine_exit_code"
-    determine_exit_code "$all_results"
-    log "DEBUG" "determine_exit_code returned"
+    # Determine exit code for this scan target
+    log "DEBUG" "Calling compute_exit_code"
+    LAST_SCAN_EXIT_CODE=$(compute_exit_code "$all_results")
+    log "DEBUG" "compute_exit_code returned $LAST_SCAN_EXIT_CODE"
 }
 
 # ============================================================================
@@ -734,33 +771,117 @@ main() {
         restore_from_quarantine "$RESTORE_QUARANTINE"
         exit $?
     fi
-    
-    # Validate project root
-    if [[ ! -d "$PROJECT_ROOT" ]]; then
-        echo -e "${RED}Error: Directory not found: $PROJECT_ROOT${NC}" >&2
-        exit 255
+
+    # List discovered targets and exit
+    if [[ "$LIST_TARGETS" == "true" ]]; then
+        if [[ "$CLI_PATH_GIVEN" == "true" ]]; then
+            if [[ ! -d "$PROJECT_ROOT" ]]; then
+                echo -e "${RED}Error: Directory not found: $PROJECT_ROOT${NC}" >&2
+                exit 255
+            fi
+            discover_web_targets "$PROJECT_ROOT"
+        else
+            discover_web_targets ""
+        fi
+        print_discovered_targets
+        exit $?
     fi
-    
-    # Print banner
-    if [[ " ${OUTPUT_FORMATS[*]} " =~ " console " ]]; then
+
+    # Print banner early for console mode
+    local banner_printed=false
+    if [[ " ${OUTPUT_FORMATS[*]} " =~ " console " && "$QUIET" != "true" ]]; then
         print_banner
-        echo -e "${CYAN}Target:${NC} $PROJECT_ROOT"
-        echo -e "${CYAN}Threads:${NC} $THREADS"
-        [[ ${#YARA_RULES_DIRS[@]} -gt 0 ]] && echo -e "${CYAN}YARA Rules:${NC} ${YARA_RULES_DIRS[*]}"
-        [[ -n "$YARA_COMPILED" ]] && echo -e "${CYAN}YARA Compiled:${NC} $YARA_COMPILED"
-        echo -e "${CYAN}Entropy Threshold:${NC} $ENTROPY_THRESHOLD"
-        echo -e "${CYAN}Heuristic Threshold:${NC} $HEURISTIC_THRESHOLD"
-        [[ -n "$QUARANTINE_DIR" ]] && echo -e "${CYAN}Quarantine:${NC} $QUARANTINE_DIR (threshold: $QUARANTINE_THRESHOLD)"
-        [[ "$GIT_CHANGED_ONLY" == "true" ]] && echo -e "${CYAN}Git Mode:${NC} Changed files only"
-        [[ -n "$GIT_SINCE_COMMIT" ]] && echo -e "${CYAN}Git Since:${NC} $GIT_SINCE_COMMIT"
-        [[ -n "$GIT_DIFF" ]] && echo -e "${CYAN}Git Diff:${NC} $GIT_DIFF"
-        [[ "$GIT_HISTORY" == "true" ]] && echo -e "${CYAN}Git History:${NC} Enabled"
-        [[ "$INCREMENTAL" == "true" ]] && echo -e "${CYAN}Incremental:${NC} Enabled"
-        echo ""
+        banner_printed=true
     fi
-    
-    # Run scan
-    run_scan
+
+    # Resolve target(s) to scan
+    SCAN_TARGETS=()
+    if [[ "$CLI_PATH_GIVEN" == "true" ]]; then
+        if [[ ! -d "$PROJECT_ROOT" ]]; then
+            echo -e "${RED}Error: Directory not found: $PROJECT_ROOT${NC}" >&2
+            exit 255
+        fi
+
+        if [[ "$NO_SUBPROJECTS" != "true" ]]; then
+            DISCOVERED_PATHS=()
+            DISCOVERED_SOURCES=()
+            DISCOVERED_TYPES=()
+            DISCOVERED_COUNTS=()
+            if expand_web_subprojects "$PROJECT_ROOT" "subfolder ($PROJECT_ROOT)"; then
+                if [[ ${#DISCOVERED_PATHS[@]} -gt 1 || "$DISCOVER_MODE" == "true" || "$ALL_TARGETS" == "true" ]]; then
+                    prompt_target_selection "$PROJECT_ROOT"
+                fi
+            fi
+        fi
+
+        if [[ ${#SCAN_TARGETS[@]} -eq 0 ]]; then
+            SCAN_TARGETS=("$PROJECT_ROOT")
+        fi
+    else
+        # No path specified on CLI: try system-wide web root discovery first
+        discover_web_targets ""
+        if [[ ${#DISCOVERED_PATHS[@]} -gt 0 ]]; then
+            prompt_target_selection ""
+        elif [[ "$DISCOVER_MODE" == "true" ]]; then
+            # Fallback to checking current working directory subprojects
+            discover_web_targets "$PROJECT_ROOT"
+            if [[ ${#DISCOVERED_PATHS[@]} -gt 0 ]]; then
+                prompt_target_selection "$PROJECT_ROOT"
+            else
+                echo -e "${RED}Error: No web directories discovered on system.${NC}" >&2
+                exit 255
+            fi
+        else
+            SCAN_TARGETS=("$PROJECT_ROOT")
+        fi
+    fi
+
+    local total_targets=${#SCAN_TARGETS[@]}
+    local target_idx=0
+    local max_exit_code=0
+    local current_target
+
+    for current_target in "${SCAN_TARGETS[@]}"; do
+        target_idx=$((target_idx + 1))
+        PROJECT_ROOT="$current_target"
+        LAST_SCAN_EXIT_CODE=0
+
+        if [[ $total_targets -gt 1 ]]; then
+            SCAN_TARGET_SLUG=$(basename "$PROJECT_ROOT" | tr -cs 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')
+        else
+            SCAN_TARGET_SLUG=""
+        fi
+
+        if [[ " ${OUTPUT_FORMATS[*]} " =~ " console " ]]; then
+            [[ "$banner_printed" == "false" && "$QUIET" != "true" ]] && { print_banner; banner_printed=true; }
+            if [[ $total_targets -gt 1 ]]; then
+                echo ""
+                echo -e "${MAGENTA}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${MAGENTA}${BOLD}TARGET [${target_idx}/${total_targets}]:${NC} ${BOLD}${PROJECT_ROOT}${NC}"
+                echo -e "${MAGENTA}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            fi
+            echo -e "${CYAN}Target:${NC} $PROJECT_ROOT"
+            echo -e "${CYAN}Threads:${NC} $THREADS"
+            [[ ${#YARA_RULES_DIRS[@]} -gt 0 ]] && echo -e "${CYAN}YARA Rules:${NC} ${YARA_RULES_DIRS[*]}"
+            [[ -n "$YARA_COMPILED" ]] && echo -e "${CYAN}YARA Compiled:${NC} $YARA_COMPILED"
+            echo -e "${CYAN}Entropy Threshold:${NC} $ENTROPY_THRESHOLD"
+            echo -e "${CYAN}Heuristic Threshold:${NC} $HEURISTIC_THRESHOLD"
+            [[ -n "$QUARANTINE_DIR" ]] && echo -e "${CYAN}Quarantine:${NC} $QUARANTINE_DIR (threshold: $QUARANTINE_THRESHOLD)"
+            [[ "$GIT_CHANGED_ONLY" == "true" ]] && echo -e "${CYAN}Git Mode:${NC} Changed files only"
+            [[ -n "$GIT_SINCE_COMMIT" ]] && echo -e "${CYAN}Git Since:${NC} $GIT_SINCE_COMMIT"
+            [[ -n "$GIT_DIFF" ]] && echo -e "${CYAN}Git Diff:${NC} $GIT_DIFF"
+            [[ "$GIT_HISTORY" == "true" ]] && echo -e "${CYAN}Git History:${NC} Enabled"
+            [[ "$INCREMENTAL" == "true" ]] && echo -e "${CYAN}Incremental:${NC} Enabled"
+            echo ""
+        fi
+
+        run_scan
+        if [[ $LAST_SCAN_EXIT_CODE -gt $max_exit_code ]]; then
+            max_exit_code=$LAST_SCAN_EXIT_CODE
+        fi
+    done
+
+    exit "$max_exit_code"
 }
 
 # Handle interrupts

@@ -99,7 +99,8 @@ output_json() {
     local results="$1"
     local duration="${2:-0}"
     mkdir -p "$OUTPUT_DIR"
-    local output_file="${OUTPUT_DIR}/webshell-scan-$(date +%Y%m%d-%H%M%S).json"
+    local slug_part="${SCAN_TARGET_SLUG:+${SCAN_TARGET_SLUG}-}"
+    local output_file="${OUTPUT_DIR}/webshell-scan-${slug_part}$(date +%Y%m%d-%H%M%S).json"
 
     local enriched_results
     enriched_results=$(echo "$results" | jq --argjson dur "$duration" --arg log "${LOG_FILE:-}" '
@@ -130,7 +131,8 @@ output_sarif() {
     local results="$1"
     local duration="${2:-0}"
     mkdir -p "$OUTPUT_DIR"
-    local output_file="${OUTPUT_DIR}/webshell-scan-$(date +%Y%m%d-%H%M%S).sarif"
+    local slug_part="${SCAN_TARGET_SLUG:+${SCAN_TARGET_SLUG}-}"
+    local output_file="${OUTPUT_DIR}/webshell-scan-${slug_part}$(date +%Y%m%d-%H%M%S).sarif"
 
     local sarif_results
     sarif_results=$(echo "$results" | jq -c '
@@ -203,7 +205,8 @@ output_html() {
     local duration="${2:-0}"
 
     mkdir -p "$OUTPUT_DIR"
-    local output_file="${OUTPUT_DIR}/webshell-scan-$(date +%Y%m%d-%H%M%S).html"
+    local slug_part="${SCAN_TARGET_SLUG:+${SCAN_TARGET_SLUG}-}"
+    local output_file="${OUTPUT_DIR}/webshell-scan-${slug_part}$(date +%Y%m%d-%H%M%S).html"
 
     local template="${TEMPLATES_DIR}/dashboard.html"
     if [[ ! -s "$template" ]]; then
@@ -559,7 +562,8 @@ output_junit() {
     local results="$1"
     local duration="${2:-0}"
     mkdir -p "$OUTPUT_DIR"
-    local output_file="${OUTPUT_DIR}/webshell-scan-$(date +%Y%m%d-%H%M%S).xml"
+    local slug_part="${SCAN_TARGET_SLUG:+${SCAN_TARGET_SLUG}-}"
+    local output_file="${OUTPUT_DIR}/webshell-scan-${slug_part}$(date +%Y%m%d-%H%M%S).xml"
 
     local scan_path
     scan_path=$(xml_escape "${PROJECT_ROOT:-}")
@@ -661,7 +665,7 @@ output_results() {
 # ============================================================================
 # EXIT CODE DETERMINATION
 # ============================================================================
-determine_exit_code() {
+compute_exit_code() {
     local results="$1"
     local fail_on
     fail_on=$(printf '%s' "${FAIL_ON:-HIGH}" | tr '[:lower:]' '[:upper:]')
@@ -679,13 +683,19 @@ determine_exit_code() {
 
     if [[ $max_severity -ge $fail_value ]]; then
         case $max_severity in
-            5) exit 3 ;;  # CRITICAL
-            4) exit 2 ;;  # HIGH
-            3) exit 1 ;;  # MEDIUM
-            2) exit 1 ;;  # LOW
-            *) exit 0 ;;
+            5) echo 3; return 0 ;;  # CRITICAL
+            4) echo 2; return 0 ;;  # HIGH
+            3) echo 1; return 0 ;;  # MEDIUM
+            2) echo 1; return 0 ;;  # LOW
+            *) echo 0; return 0 ;;
         esac
     fi
 
-    exit 0
+    echo 0
+}
+
+determine_exit_code() {
+    local code
+    code=$(compute_exit_code "$1")
+    exit "$code"
 }
