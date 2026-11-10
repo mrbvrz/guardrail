@@ -182,9 +182,15 @@ Thresholds:
 # Specific thread count
 ./threatscan.sh /project --threads 8
 
-# With progress bar
-./threatscan.sh /project --threads 4 --progress
+# Progress output is on by default (phase lines + bar with rate/ETA)
+./threatscan.sh /project --threads 4
+
+# Silence it for scripting; findings only
+./threatscan.sh /project --quiet
 ```
+
+Progress goes to stderr, so stdout stays clean for piping. On a terminal the bar
+is rewritten in place; redirected output gets a plain line every few seconds.
 
 ### 5. Git-Aware Scanning
 

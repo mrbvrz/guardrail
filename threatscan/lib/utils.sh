@@ -157,23 +157,97 @@ trim() {
 }
 
 # ============================================================================
-# PROGRESS BAR
+# STATUS / PROGRESS OUTPUT
 # ============================================================================
+# Everything here writes to stderr so stdout stays clean for piping reports.
+# Progress is on by default: on a real webroot a silent scan is indistinguishable
+# from a hung one. --quiet / --no-progress turns it off.
+status() {
+    [[ "${QUIET:-false}" == "true" ]] && return 0
+    printf '%b\n' "$*" >&2
+    return 0
+}
+
+# Erase the transient progress line before printing a permanent one.
+progress_clear() {
+    [[ "${QUIET:-false}" == "true" ]] && return 0
+    [[ -t 2 ]] && printf '\r\033[K' >&2
+    return 0
+}
+
+PROGRESS_LAST_EMIT=0
+
+# One-line progress. On a terminal the line is rewritten in place; when stderr
+# is redirected (CI, log file) a plain line is emitted so the log still moves.
+# $1=current $2=total $3=start_ms (0 = no rate/ETA) $4=label
+PROGRESS_LAST_LINE=""
+
 show_progress_bar() {
-    local current="$1"
-    local total="$2"
-    local width=50
-    local percent=0
+    local current="${1:-0}"
+    local total="${2:-0}"
+    local start_ms="${3:-0}"
+    local label="${4:-Scanning}"
+    local width=40
+
+    [[ "${QUIET:-false}" == "true" ]] && return 0
+    [[ "${PROGRESS:-true}" == "true" ]] || return 0
     [[ $total -le 0 ]] && return 0
     [[ $current -gt $total ]] && current=$total
-    percent=$((current * 100 / total))
+
+    local on_tty=false
+    [[ -t 2 ]] && on_tty=true
+
+    # A terminal can be repainted twice a second; a redirected stderr is
+    # throttled much harder, and identical lines are dropped entirely.
+    local interval=500
+    [[ "$on_tty" == "true" ]] || interval=5000
+    local now
+    now=$(timestamp_ms)
+    if [[ $current -lt $total ]] && [[ $((now - PROGRESS_LAST_EMIT)) -lt $interval ]]; then
+        return 0
+    fi
+    PROGRESS_LAST_EMIT=$now
+
+    local percent=$((current * 100 / total))
     local filled=$((current * width / total))
     local empty=$((width - filled))
-    
-    printf "\r${CYAN}[${NC}"
-    printf "%${filled}s" | tr ' ' '█'
-    printf "%${empty}s" | tr ' ' '░'
-    printf "${CYAN}]${NC} %d/%d (%d%%)" "$current" "$total" "$percent"
+
+    local bar_filled bar_empty
+    if [[ "$on_tty" == "true" ]]; then
+        bar_filled=$(printf "%${filled}s" | tr ' ' '█')
+        bar_empty=$(printf "%${empty}s" | tr ' ' '░')
+    else
+        bar_filled=$(printf "%${filled}s" | tr ' ' '#')
+        bar_empty=$(printf "%${empty}s" | tr ' ' '.')
+    fi
+
+    local rate="" eta="" extra=""
+    if [[ "$start_ms" =~ ^[0-9]+$ ]] && [[ $start_ms -gt 0 ]] && [[ $current -gt 0 ]]; then
+        local elapsed=$((now - start_ms))
+        if [[ $elapsed -gt 500 ]]; then
+            rate=$(awk -v c="$current" -v e="$elapsed" 'BEGIN { printf "%.1f", c * 1000 / e }')
+            eta=$(awk -v r="$rate" -v rem="$((total - current))" 'BEGIN { printf "%.0f", (r > 0 ? rem / r : 0) }')
+            extra+=" • ${rate} files/s • ETA ${eta}s"
+        fi
+    fi
+    # Batches still running explain a bar that is not moving.
+    if [[ -n "${BATCH_PIDS+x}" ]] && [[ ${#BATCH_PIDS[@]} -gt 0 ]] && [[ $current -lt $total ]]; then
+        extra+=" • ${#BATCH_PIDS[@]} batch(es) in flight"
+    fi
+    [[ -n "${PROGRESS_NOTE:-}" ]] && extra+=" • ${PROGRESS_NOTE}"
+
+    local line
+    if [[ "$on_tty" == "true" ]]; then
+        line=$(printf '%s[%s%s]%s %d/%d (%d%%)%s%s%s' \
+            "$label " "$bar_filled" "$bar_empty" "$NC" "$current" "$total" "$percent" "$DIM" "$extra" "$NC")
+        printf '\r\033[K%s' "$line" >&2
+    else
+        line=$(printf '%s [%s%s] %d/%d (%d%%)%s' \
+            "$label" "$bar_filled" "$bar_empty" "$current" "$total" "$percent" "$extra")
+        [[ "$line" == "$PROGRESS_LAST_LINE" ]] && return 0
+        printf '%s\n' "$line" >&2
+    fi
+    PROGRESS_LAST_LINE="$line"
     return 0
 }
 

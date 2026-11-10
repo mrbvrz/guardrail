@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="100%" height="100%">
+  <defs>
+    <!-- macOS System Drop Shadows for Base Tile -->
+    <filter id="macTileShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <!-- Diffuse Ambient Shadow -->
+      <feDropShadow dx="0" dy="20" stdDeviation="32" flood-color="#000000" flood-opacity="0.38"/>
+      <!-- Direct Downward Key Shadow -->
+      <feDropShadow dx="0" dy="46" stdDeviation="40" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+
+    <!-- 3D Foreground Shield Drop Shadow (onto tile) -->
+    <filter id="shield3DShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="32" stdDeviation="26" flood-color="#000000" flood-opacity="0.8"/>
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+
+    <!-- Neon Glow Filter -->
+    <filter id="neonAura" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="24" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Tile Background Gradient (Deep Anodized Slate / Midnight Cyber) -->
+    <linearGradient id="tileBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="25%" stop-color="#0f172a"/>
+      <stop offset="70%" stop-color="#070c18"/>
+      <stop offset="100%" stop-color="#020409"/>
+    </linearGradient>
+
+    <!-- Top Specular Rim (Apple Glass / Brushed Bevel Highlight) -->
+    <linearGradient id="topRimLight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="5%" stop-color="#38bdf8" stop-opacity="0.25"/>
+      <stop offset="25%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="85%" stop-color="#000000" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.6"/>
+    </linearGradient>
+
+    <!-- Radial Cyber Spotlight on Tile Center -->
+    <radialGradient id="centerSpot" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#0284c7" stop-opacity="0.25"/>
+      <stop offset="45%" stop-color="#06b6d4" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.0"/>
+    </radialGradient>
+
+    <!-- Left Guardrail Wing: Machined Electric Cyan with 3D cylindrical lighting -->
+    <linearGradient id="macRailL" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bae6fd"/>
+      <stop offset="20%" stop-color="#38bdf8"/>
+      <stop offset="55%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#075985"/>
+    </linearGradient>
+
+    <!-- Right Guardrail Wing: Machined Neon Emerald with 3D cylindrical lighting -->
+    <linearGradient id="macRailR" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a7f3d0"/>
+      <stop offset="25%" stop-color="#34d399"/>
+      <stop offset="65%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#064e3b"/>
+    </linearGradient>
+
+    <!-- Dynamic Security Verified Checkmark 3D Gradient -->
+    <linearGradient id="macCheck" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="20%" stop-color="#6ee7b7"/>
+      <stop offset="60%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+
+    <!-- Shield Inner Plate (Deep Obsidian Core) -->
+    <linearGradient id="shieldCavity" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0e1726"/>
+      <stop offset="50%" stop-color="#070c16"/>
+      <stop offset="100%" stop-color="#020306"/>
+    </linearGradient>
+
+    <linearGradient id="railSlotGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#020617" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ============================================== -->
+  <!-- 1. BASE TILE (Apple macOS Standard Squircle)   -->
+  <!-- ============================================== -->
+  <g filter="url(#macTileShadow)">
+    <!-- Base Squircle -->
+    <rect x="108" y="108" width="808" height="808" rx="184" ry="184" fill="url(#tileBody)"/>
+    
+    <!-- Fine Carbon / Dot Matrix Mesh Overlay (Apple Pro look) -->
+    <rect x="108" y="108" width="808" height="808" rx="184" ry="184" fill="url(#centerSpot)"/>
+
+    <!-- Subtle Inner Rim / Specular Border Highlight -->
+    <rect x="108" y="108" width="808" height="808" rx="184" ry="184" fill="none" stroke="url(#topRimLight)" stroke-width="3.5"/>
+  </g>
+
+  <!-- ============================================== -->
+  <!-- 2. FOREGROUND TACTILE GUARDRAIL SHIELD         -->
+  <!-- ============================================== -->
+  <g filter="url(#shield3DShadow)">
+    
+    <!-- Shield Obsidian Cavity / Armor Core Plate -->
+    <path d="M 512 206
+             L 754 298
+             C 754 550, 646 720, 512 814
+             C 378 720, 270 550, 270 298
+             Z"
+          fill="url(#shieldCavity)"/>
+    
+    <path d="M 512 206
+             L 754 298
+             C 754 550, 646 720, 512 814
+             C 378 720, 270 550, 270 298
+             Z"
+          fill="none" stroke="#1e293b" stroke-width="4" opacity="0.65"/>
+
+    <!-- Ambient Core Luminescence -->
+    <circle cx="512" cy="512" r="190" fill="#06b6d4" opacity="0.18" filter="url(#neonAura)"/>
+
+    <!-- LEFT GUARDRAIL WING (Heavy Machined Protective Rail) -->
+    <path d="M 488 212
+             L 282 290
+             C 282 542, 382 710, 488 804
+             L 488 678
+             C 406 602, 364 484, 364 340
+             L 488 290
+             Z"
+          fill="url(#macRailL)"/>
+    
+    <!-- Left Wing 3D Chamfer Specular Edge (Top Light Reflection) -->
+    <path d="M 484 218 L 290 294 C 290 530, 384 692, 484 782"
+          fill="none" stroke="#ffffff" stroke-width="7.5" stroke-linecap="round" opacity="0.6"/>
+    
+    <!-- Left Wing Inner Crease Shadow (Ambient Occlusion) -->
+    <path d="M 486 292 L 368 342 C 368 476, 406 588, 486 666"
+          fill="none" stroke="#000000" stroke-width="5" opacity="0.4"/>
+
+    <!-- Left Wing Guardrail Industrial Slit / Profile Groove -->
+    <path d="M 326 348
+             L 454 298
+             C 458 296, 464 298, 464 304
+             L 464 316
+             C 464 322, 458 326, 454 328
+             L 326 376
+             C 320 378, 314 374, 314 368
+             L 314 356
+             C 314 350, 320 346, 326 348 Z"
+          fill="url(#railSlotGrad)"/>
+
+    <!-- RIGHT GUARDRAIL WING (Heavy Machined Protective Rail) -->
+    <path d="M 536 212
+             L 742 290
+             C 742 542, 642 710, 536 804
+             L 536 678
+             C 618 602, 660 484, 660 340
+             L 536 290
+             Z"
+          fill="url(#macRailR)"/>
+    
+    <!-- Right Wing 3D Chamfer Specular Edge -->
+    <path d="M 540 218 L 734 294 C 734 530, 640 692, 540 782"
+          fill="none" stroke="#ffffff" stroke-width="7.5" stroke-linecap="round" opacity="0.6"/>
+
+    <!-- Right Wing Inner Crease Shadow -->
+    <path d="M 538 292 L 656 342 C 656 476, 618 588, 538 666"
+          fill="none" stroke="#000000" stroke-width="5" opacity="0.4"/>
+
+    <!-- Right Wing Guardrail Industrial Slit / Profile Groove -->
+    <path d="M 698 348
+             L 570 298
+             C 566 296, 560 298, 560 304
+             L 560 316
+             C 560 322, 566 326, 570 328
+             L 698 376
+             C 704 378, 710 374, 710 368
+             L 710 356
+             C 710 350, 704 346, 698 348 Z"
+          fill="url(#railSlotGrad)"/>
+
+    <!-- THE DYNAMIC SECURITY CHECKMARK (Glossy Tactile Core) -->
+    <!-- Ambient Shadow under Checkmark -->
+    <path d="M 412 516
+             L 484 588
+             L 616 446"
+          fill="none" stroke="#000000" stroke-width="52" stroke-linecap="round" stroke-linejoin="round" opacity="0.45"/>
+    
+    <!-- Main Glowing Checkmark Body -->
+    <path d="M 412 508
+             L 484 580
+             L 616 438"
+          fill="none" stroke="url(#macCheck)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Specular High-Gloss Glint -->
+    <path d="M 416 504
+             L 484 572
+             L 612 434"
+          fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
+  </g>
+</svg>

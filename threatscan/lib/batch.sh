@@ -4,6 +4,80 @@
 # in the parent process so parallel batches never interleave output.
 
 # ============================================================================
+# BATCH TRACKING (parent process)
+# ============================================================================
+# One entry per in-flight batch, so progress reports files that have actually
+# been scanned instead of files that were merely handed to a child.
+BATCH_PIDS=()
+BATCH_DIR=""
+BATCH_COMPLETED=0
+BATCH_TOTAL=0
+BATCH_START_MS=0
+
+# Files finished so far. Each child appends one byte to progress.count after a
+# file, so the bar moves file by file instead of jumping once per batch (with
+# BATCH_SIZE=100 a batch can run for minutes, which looks like a hang).
+batch_progress_count() {
+    local dir="${BATCH_DIR:-}"
+    local raw
+    [[ -z "$dir" ]] && { echo 0; return 0; }
+    # progress.count does not exist until the first file finishes; a plain
+    # `2>/dev/null` would still let the shell print the redirect error.
+    raw=$({ wc -c < "${dir}/progress.count"; } 2>/dev/null) || raw=0
+    raw=${raw//[!0-9]/}
+    echo "${raw:-0}"
+    return 0
+}
+
+reap_batches() {
+    local alive=()
+    local i pid
+    for i in "${!BATCH_PIDS[@]}"; do
+        pid="${BATCH_PIDS[$i]}"
+        if kill -0 "$pid" 2>/dev/null; then
+            alive+=("$pid")
+        else
+            wait "$pid" 2>/dev/null || log "WARN" "Batch process $pid exited with error"
+        fi
+    done
+    if [[ ${#alive[@]} -gt 0 ]]; then
+        BATCH_PIDS=("${alive[@]}")
+    else
+        BATCH_PIDS=()
+    fi
+    return 0
+}
+
+# Block until fewer than $1 batches are in flight. Sleeps in short steps so the
+# progress line keeps moving while a slow batch runs (a 100-file batch on a
+# large webroot can take minutes, and that must not look like a hang).
+drain_batches_to() {
+    local limit="${1:-1}"
+    while [[ ${#BATCH_PIDS[@]} -ge $limit ]]; do
+        reap_batches
+        if [[ ${#BATCH_PIDS[@]} -ge $limit ]]; then
+            sleep 0.2
+            BATCH_COMPLETED=$(batch_progress_count)
+            show_progress_bar "$BATCH_COMPLETED" "$BATCH_TOTAL" "$BATCH_START_MS"
+        fi
+    done
+    return 0
+}
+
+# Wait for every in-flight batch to finish, repainting progress meanwhile.
+drain_batches() {
+    while [[ ${#BATCH_PIDS[@]} -gt 0 ]]; do
+        reap_batches
+        BATCH_COMPLETED=$(batch_progress_count)
+        show_progress_bar "$BATCH_COMPLETED" "$BATCH_TOTAL" "$BATCH_START_MS"
+        if [[ ${#BATCH_PIDS[@]} -gt 0 ]]; then
+            sleep 0.2
+        fi
+    done
+    return 0
+}
+
+# ============================================================================
 # BATCH PROCESSING
 # ============================================================================
 scan_batch() {
@@ -39,6 +113,8 @@ scan_batch() {
         fi
 
         [[ -n "$result" ]] && batch_results+=("$result")
+        # One byte per finished file: the parent reads this to drive progress.
+        printf '.' >> "${batch_dir}/progress.count" 2>/dev/null || true
     done
 
     if [[ ${#batch_results[@]} -gt 0 ]]; then

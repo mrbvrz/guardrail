@@ -55,7 +55,8 @@ VT_API_KEY=""
 MALWAREBAZAAR=true
 CACHE_TTL=86400
 FAIL_ON="HIGH"
-PROGRESS=false
+PROGRESS=true
+QUIET=false
 
 # Keys explicitly provided on the command line. Config files must not override
 # them; track them so load_config() can skip those setters.
@@ -150,7 +151,9 @@ Output Options:
   --output FORMATS       Output formats: console,json,sarif,html,junit (comma-separated)
   --output-dir DIR       Output directory (default: ./reports)
   --fail-on LEVEL        Fail on severity: LOW,MEDIUM,HIGH,CRITICAL (default: HIGH)
-  --progress             Show progress bar
+  --progress             Force progress output (default: on)
+  --no-progress          Hide the progress bar, keep phase messages
+  -q, --quiet            Print findings only (no progress, no status)
   -v, --verbose          Verbose output
 
 Quarantine Options:
@@ -312,6 +315,15 @@ parse_args() {
                 ;;
             --progress)
                 PROGRESS=true
+                shift
+                ;;
+            --no-progress)
+                PROGRESS=false
+                shift
+                ;;
+            -q|--quiet)
+                QUIET=true
+                PROGRESS=false
                 shift
                 ;;
             --quarantine)
@@ -517,6 +529,7 @@ run_scan() {
     [[ -n "$QUARANTINE_DIR" ]] && mkdir -p "$QUARANTINE_DIR"
     
     log "INFO" "Starting scan $scan_id on: $PROJECT_ROOT"
+    status "${CYAN}${BOLD}[1/5]${NC} Discovering files under ${BOLD}${PROJECT_ROOT}${NC}"
     
     # Find files
     local files=()
@@ -525,16 +538,29 @@ run_scan() {
         [[ -n "$line" ]] && files+=("$line")
     done < <(find_scan_files "$PROJECT_ROOT" 2>/dev/null)
 
-    # Filter files through should_scan_file
+    status "      ${#files[@]} file(s) found"
+
+    # Filter files through should_scan_file (content-type sniffing + extension
+    # allowlist). That is per-file filesystem work, so it reports progress too;
+    # without it a large webroot sits silent for a long time before scanning.
     local filtered_files=()
     local file
-    if [[ ${#files[@]} -gt 0 ]]; then
+    local filter_total=${#files[@]}
+    local filter_index=0
+    local filter_start
+    filter_start=$(timestamp_ms)
+    if [[ $filter_total -gt 0 ]]; then
         for file in "${files[@]}"; do
+            filter_index=$((filter_index + 1))
             if should_scan_file "$file"; then
                 filtered_files+=("$file")
             fi
+            if [[ $((filter_index % 10)) -eq 0 ]] || [[ $filter_index -eq $filter_total ]]; then
+                show_progress_bar "$filter_index" "$filter_total" "$filter_start" "Filtering"
+            fi
         done
     fi
+    progress_clear
 
     local file_count=${#filtered_files[@]}
 
@@ -546,7 +572,7 @@ run_scan() {
     fi
 
     log "INFO" "Found $file_count files to scan"
-    [[ "$PROGRESS" == "true" ]] && show_progress_bar 0 "$file_count"
+    status "      ${file_count} file(s) match the scan filter"
 
     # Each batch writes its own JSON file here; the parent aggregates once
     local batch_dir
@@ -555,7 +581,9 @@ run_scan() {
     # Compile YARA if needed
     local yara_compiled=""
     if [[ ${#YARA_RULES_DIRS[@]} -gt 0 ]] && [[ -z "$YARA_COMPILED" ]]; then
+        status "      compiling YARA rules..."
         yara_compiled=$(compile_yara_rules "${YARA_RULES_DIRS[@]}") || yara_compiled=""
+        [[ -z "$yara_compiled" ]] && status "      ${YELLOW}YARA rules unavailable, continuing without them${NC}"
     elif [[ -n "$YARA_COMPILED" ]]; then
         yara_compiled="$YARA_COMPILED"
     fi
@@ -575,10 +603,16 @@ run_scan() {
     log "INFO" "Using $thread_count threads"
     
     # Scan files
-    local scanned=0
-    local pids=()
+    BATCH_DIR="$batch_dir"
+    BATCH_TOTAL=$file_count
+    BATCH_COMPLETED=0
+    BATCH_START_MS=$(timestamp_ms)
+    BATCH_PIDS=()
+
     local batch_files=()
     local file_index=0
+
+    status "${CYAN}${BOLD}[2/5]${NC} Scanning ${BOLD}${file_count}${NC} file(s) with ${thread_count} thread(s), ${BATCH_SIZE} file(s) per batch"
 
     for file in "${filtered_files[@]}"; do
         file_index=$((file_index + 1))
@@ -588,38 +622,27 @@ run_scan() {
             local batch_to_scan=("${batch_files[@]}")
             log "DEBUG" "Main: dispatching batch of ${#batch_to_scan[@]} files"
             scan_batch "$batch_dir" "$yara_compiled" "$scan_id" "${batch_to_scan[@]}" &
-            pids+=("$!")
+            BATCH_PIDS+=("$!")
             batch_files=()
 
-            # Limit concurrent batches, reaping finished children
-            while [[ ${#pids[@]} -ge thread_count ]]; do
-                local alive=()
-                local pid
-                for pid in "${pids[@]}"; do
-                    if kill -0 "$pid" 2>/dev/null; then
-                        alive+=("$pid")
-                    else
-                        wait "$pid" 2>/dev/null || log "WARN" "Batch process $pid exited with error"
-                    fi
-                done
-                pids=("${alive[@]}")
-                [[ ${#pids[@]} -ge thread_count ]] && sleep 0.1
-            done
-
-            scanned=$((scanned + ${#batch_to_scan[@]}))
-            [[ "$PROGRESS" == "true" ]] && show_progress_bar "$scanned" "$file_count"
+            # Keep at most $thread_count batches in flight. Files are counted as
+            # done only when their batch is reaped, so the bar tracks real work.
+            drain_batches_to "$thread_count"
+            show_progress_bar "$BATCH_COMPLETED" "$file_count" "$BATCH_START_MS"
         fi
     done
 
-    # Wait for remaining batches
-    if [[ ${#pids[@]} -gt 0 ]]; then
-        local pid
-        for pid in "${pids[@]}"; do
-            wait "$pid" 2>/dev/null || log "WARN" "Final batch process $pid exited with error"
-        done
-    fi
+    # Wait for the last batches, repainting progress until they finish.
+    drain_batches
+    BATCH_COMPLETED=$(batch_progress_count)
+    show_progress_bar "$BATCH_COMPLETED" "$file_count" "$BATCH_START_MS"
+    progress_clear
 
-    [[ "$PROGRESS" == "true" ]] && echo ""
+    local scan_duration=$(( $(timestamp_ms) - BATCH_START_MS ))
+    local scan_rate
+    scan_rate=$(awk -v c="$BATCH_COMPLETED" -v e="$scan_duration" 'BEGIN { printf "%.1f", (e > 0 ? c * 1000 / e : 0) }')
+    status "      scanned ${BATCH_COMPLETED} file(s) in $(format_duration "$scan_duration") (${scan_rate} files/s)"
+    status "${CYAN}${BOLD}[3/5]${NC} Collecting results"
     
     # Aggregate batch results
     local all_findings='[]'
@@ -656,9 +679,11 @@ run_scan() {
     log "DEBUG" "All results: $all_results"
     
     # Output
+    status "${CYAN}${BOLD}[4/5]${NC} Writing reports (${OUTPUT_FORMATS[*]})"
     log "DEBUG" "Calling output_results"
     output_results "$all_results" "$duration"
     log "DEBUG" "output_results returned"
+    status "${CYAN}${BOLD}[5/5]${NC} Done in $(format_duration "$duration")"
     
     # Determine exit code
     log "DEBUG" "Calling determine_exit_code"

@@ -1,0 +1,21 @@
+{
+  "name": "Guardrail Security & Migration Suite",
+  "short_name": "Guardrail",
+  "description": "Operational security, migration validation and audit scripts for DPMPTSP Pekanbaru",
+  "icons": [
+    {
+      "src": "/assets/favicon/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/favicon/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#0b0f19",
+  "background_color": "#020409",
+  "display": "standalone"
+}
