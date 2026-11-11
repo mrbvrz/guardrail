@@ -19,13 +19,6 @@ log() {
 # ============================================================================
 # SEVERITY ORDER
 # ============================================================================
-SEVERITY_ORDER_CLEAN=0
-SEVERITY_ORDER_INFO=1
-SEVERITY_ORDER_LOW=2
-SEVERITY_ORDER_MEDIUM=3
-SEVERITY_ORDER_HIGH=4
-SEVERITY_ORDER_CRITICAL=5
-
 severity_value() {
     local severity="$1"
     case "$severity" in

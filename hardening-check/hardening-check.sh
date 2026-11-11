@@ -903,7 +903,7 @@ check_password() {
     # Shadow permissions
     local m; m=$(stat -c '%a' /etc/shadow 2>/dev/null || stat -f '%Lp' /etc/shadow 2>/dev/null)
     case "$m" in
-      640|600|000|640) check PWD-10 HIGH PASS "/etc/shadow permissions = $m" ;;
+      640|600|400|000) check PWD-10 HIGH PASS "/etc/shadow permissions = $m" ;;
       *) check PWD-10 HIGH FAIL "/etc/shadow permissions = $m (should be 640 or stricter)" ;;
     esac
   else
@@ -1247,7 +1247,7 @@ check_db() {
       check DB-02 MEDIUM SKIP "Cannot query MySQL as current user (needs DB credentials)"
     else
       case "$bind" in
-        0.0.0.0|*|::) check DB-02 HIGH WARN "MySQL bind_address = '$bind' (bound to all interfaces)" ;;
+        0.0.0.0|'*'|::) check DB-02 HIGH WARN "MySQL bind_address = '$bind' (bound to all interfaces)" ;;
         localhost|127.0.0.1|::1) check DB-02 HIGH PASS "MySQL bind_address = '$bind'" ;;
         *) check DB-02 MEDIUM INFO "MySQL bind_address = '$bind'" ;;
       esac

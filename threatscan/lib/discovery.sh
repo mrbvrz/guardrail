@@ -288,7 +288,6 @@ discover_standard_roots() {
         [[ ! -d "$dir" ]] && continue
         # Avoid scanning /var/www directly as a single site if it only holds /var/www/html
         if [[ "$dir" == "/var/www" && -d "/var/www/html" ]]; then
-            local extra_in_var_www=false
             local sub
             for sub in /var/www/*/; do
                 [[ ! -d "$sub" ]] && continue
@@ -296,7 +295,6 @@ discover_standard_roots() {
                 [[ "$sub" == "/var/www/html" ]] && continue
                 if ! is_ignored_web_subdir "$(basename "$sub")" && has_web_project_markers "$sub"; then
                     register_discovered_target "$sub" "subfolder (/var/www)"
-                    extra_in_var_www=true
                 fi
             done
             continue

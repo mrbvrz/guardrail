@@ -277,7 +277,7 @@ output_junit() {
         safe_file=$(xml_escape "$file")
         safe_class="scan_$(basename "$file" | sed 's/[^a-zA-Z0-9]/_/g')"
 
-        testcases+="    <testcase classname=\"WebshellScanner\" name=\"${safe_class}\" time=\"0\">"
+        testcases+="    <testcase classname=\"WebshellScanner\" name=\"${safe_class}\" file=\"${safe_file}\" time=\"0\">"
         if [[ "$severity" == "CRITICAL" || "$severity" == "HIGH" ]]; then
             testcases+="<failure message=\"${severity} finding (score ${score})\">$(xml_escape "$yara")</failure>"
             failure_count=$((failure_count + 1))

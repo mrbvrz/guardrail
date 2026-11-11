@@ -163,12 +163,18 @@ threat_intel:
 ### 🧬 1. YARA Rules
 
 ```bash
+# Built-in YARA rules are used automatically when the yara binary is installed
+./threatscan.sh /var/www/html
+
 # Use multiple YARA rule directories
 ./threatscan.sh /var/www/html --yara-rules ./rules/yara,./custom-rules
 
 # Pre-compile YARA rules for faster repeated scans
 ./threatscan.sh --compile-yara ./rules/yara --compile-yara-output ./compiled.yarc
 ./threatscan.sh /var/www/html --yara-compiled ./compiled.yarc
+
+# Skip YARA entirely (no binary, or to isolate heuristic results)
+./threatscan.sh /var/www/html --no-yara
 ```
 
 ### 📈 2. Entropy Analysis
@@ -194,7 +200,12 @@ Signals:
   • Known webshell strings & indicators                       weight: 10
   • High-entropy code blocks                                  weight:  5
   • YARA signature match bonus                                weight: 30
+  • Built-in signature match bonus                            weight: 20
 ```
+
+`--heuristic-threshold` (default: 70) only gates the heuristic part: a file whose
+heuristic score is below it contributes no heuristic points. Signature, YARA and
+entropy evidence is always scored, so a low heuristic score never hides a match.
 
 **Severity Mapping:**
 - 🟢 **0**: `CLEAN`
