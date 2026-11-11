@@ -3,12 +3,10 @@
 
 scanner:
   threads: "auto"           # auto, or number (max 32)
-  timeout: 300              # per-file timeout in seconds
   max_file_size: "10MB"     # KB, MB, GB
   follow_symlinks: false
   cache_dir: ""             # empty = disabled
   incremental: false        # use cache for unchanged files
-  stream_mode: false        # low memory mode
   batch_size: 100           # files per batch
 
 detection:
@@ -59,8 +57,6 @@ git:
   scan_changed_only: false
   since_commit: ""          # commit hash
   diff: ""                  # ref1..ref2
-  history: false            # scan entire history
-  since_date: "30 days ago" # for history mode
   exclude_branches: ["main", "master", "release/*"]
 
 whitelist:
@@ -83,9 +79,3 @@ whitelist:
     - "*.map"
     - "*.min.css"
   files: []
-
-threat_intel:
-  enabled: false
-  virustotal_api_key: ""    # set via env VT_API_KEY or --vt-api-key
-  malwarebazaar: true
-  cache_ttl: 86400          # 24 hours

@@ -193,7 +193,7 @@ sshd_get() {
       for f in /etc/ssh/sshd_config.d/*.conf; do [ -r "$f" ] && cat "$f"; done
     fi
   } 2>/dev/null | awk -v k="$key" \
-      'tolower($1)==tolower(k) && $1 !~ /^#/ {v=$2} END {print v}'
+      'tolower($1)=="match" {exit} tolower($1)==tolower(k) {v=$2} END {print v}'
 }
 svc_active() {
   local s=$1
@@ -267,6 +267,7 @@ self_test() {
   _t "$(grade_for 75)" "C" "grade 75=C"
   _t "$(grade_for 65)" "D" "grade 65=D"
   _t "$(grade_for 30)" "F" "grade 30=F"
+  _t "$(score_and_grade 0 0)" "N/A N/A" "all skipped is N/A, not F"
   echo
   [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
   return $fail
@@ -278,6 +279,15 @@ grade_for() {
   elif num_gt "$s" 69; then echo C
   elif num_gt "$s" 59; then echo D
   else echo F; fi
+}
+
+# "<score> <grade>", or "N/A N/A" when every check was skipped.
+score_and_grade() {
+  local p=$1 t=$2
+  if [ "$t" -le 0 ]; then echo "N/A N/A"; return; fi
+  local s
+  s=$(awk -v p="$p" -v t="$t" 'BEGIN{printf "%.1f", p*100/t}')
+  echo "$s $(grade_for "$s")"
 }
 
 if [ "${SELF_TEST:-0}" -eq 1 ]; then self_test; exit $?; fi
@@ -790,10 +800,12 @@ check_tls() {
       check TLS-05 MEDIUM WARN "Port 443 open but handshake failed"
     fi
 
-    # HSTS
+    # HSTS: the header only comes back with an actual HTTP request, so a bare
+    # TLS handshake can never observe it.
     local hsts
-    hsts=$(echo | tmo 5 openssl s_client -connect 127.0.0.1:443 -servername localhost -quiet 2>/dev/null \
-      | head -50 | grep -i 'strict-transport-security' | head -1)
+    hsts=$(printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+      | tmo 5 openssl s_client -connect 127.0.0.1:443 -servername localhost -quiet 2>/dev/null \
+      | head -100 | grep -i 'strict-transport-security' | head -1)
     [ -n "$hsts" ] && check TLS-06 MEDIUM PASS "HSTS header present" \
                    || check TLS-06 MEDIUM WARN "HSTS header not observed"
   else
@@ -969,7 +981,8 @@ check_system() {
   local mac=""
   if have getenforce; then
     local se; se=$(getenforce 2>/dev/null)
-    [ "$se" = "Enforcing" ] && mac="SELinux Enforcing" && check SYS-05 HIGH PASS "SELinux enforcing" \
+    mac="SELinux ${se:-unknown}"
+    [ "$se" = "Enforcing" ] && check SYS-05 HIGH PASS "SELinux enforcing" \
                             || check SYS-05 HIGH WARN "SELinux = $se"
   fi
   if [ -z "$mac" ] && [ -d /sys/kernel/security/apparmor ]; then
@@ -1337,11 +1350,9 @@ PY
 # REPORT
 # ============================================================
 print_report() {
-  local score=0 grade="F"
-  if [ $W_TOTAL -gt 0 ]; then
-    score=$(awk -v p="$W_PASS" -v t="$W_TOTAL" 'BEGIN{printf "%.1f", p*100/t}')
-  fi
-  grade=$(grade_for "$score")
+  local score="N/A" grade="N/A" score_json="null"
+  read -r score grade <<< "$(score_and_grade "$W_PASS" "$W_TOTAL")"
+  [ "$score" != "N/A" ] && score_json="$score"
 
   local crit_high_fail=0
   local i
@@ -1354,7 +1365,7 @@ print_report() {
   if [ $JSON -eq 1 ]; then
     local first=1
     printf '{"host":"%s","os":"%s","kernel":"%s","score":%s,"grade":"%s","summary":{"total":%d,"pass":%d,"warn":%d,"fail":%d,"skip":%d,"info":%d},"findings":[' \
-      "$HOSTNAME_S" "${OS_NAME:-unknown}" "$(uname -r 2>/dev/null)" "$score" "$grade" \
+      "$HOSTNAME_S" "${OS_NAME:-unknown}" "$(uname -r 2>/dev/null)" "$score_json" "$grade" \
       "$TOTAL" "$N_PASS" "$N_WARN" "$N_FAIL" "$N_SKIP" "$N_INFO"
     for i in "${!F_ID[@]}"; do
       [ $first -eq 0 ] && printf ','

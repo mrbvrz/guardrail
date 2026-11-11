@@ -23,6 +23,35 @@ heuristic_weight() {
 # Signal names for iteration
 HEURISTIC_SIGNALS=("dangerous_functions" "obfuscation" "user_input_sinks" "file_operations" "network_operations" "suspicious_strings" "entropy" "yara_bonus")
 
+# Count all matches of any pattern in a single grep pass.
+grep_count_any() {
+    local ignore_case=false
+    if [[ "${1:-}" == "-i" ]]; then
+        ignore_case=true
+        shift
+    fi
+    local content="$1"
+    shift
+    local re="" p
+    for p in "$@"; do
+        [[ -n "$re" ]] && re+="|"
+        re+="($p)"
+    done
+    local count
+    if [[ "$ignore_case" == "true" ]]; then
+        count=$(printf '%s\n' "$content" | grep -oiE "$re" 2>/dev/null | wc -l)
+    else
+        count=$(printf '%s\n' "$content" | grep -oE "$re" 2>/dev/null | wc -l)
+    fi
+    echo $((count + 0))
+}
+
+# Drop comment-only lines before scoring. Scanned files are untrusted: a
+# function name mentioned in documentation is not executable code.
+strip_source_comments() {
+    grep -vE '^[[:space:]]*(//|#|\*|/\*|<!--|-->|\*/)' 2>/dev/null || true
+}
+
 # ============================================================================
 # HEURISTIC ANALYSIS
 # ============================================================================
@@ -31,22 +60,30 @@ analyze_heuristics() {
     local content
     content=$(cat "$file" 2>/dev/null)
     [[ -z "$content" ]] && output_heuristic_zero && return
+    content=$(printf '%s\n' "$content" | strip_source_comments)
+    [[ -z "$content" ]] && output_heuristic_zero && return
     
     # Use regular arrays for bash 3.x compatibility
     local signals_dangerous_functions=$(count_dangerous_functions "$content")
-    local details_dangerous_functions=$(list_dangerous_functions "$content")
     local signals_obfuscation=$(count_obfuscation "$content")
-    local details_obfuscation=$(list_obfuscation "$content")
     local signals_user_input_sinks=$(count_user_input_sinks "$content")
-    local details_user_input_sinks=$(list_user_input_sinks "$content")
     local signals_file_operations=$(count_file_operations "$content")
-    local details_file_operations=$(list_file_operations "$content")
     local signals_network_operations=$(count_network_operations "$content")
-    local details_network_operations=$(list_network_operations "$content")
     local signals_suspicious_strings=$(count_suspicious_strings "$content")
-    local details_suspicious_strings=$(list_suspicious_strings "$content")
     local signals_entropy=0
     local details_entropy=""
+    
+    # Details are only collected for signals that actually fired, so clean
+    # files stay at one grep per category instead of one per pattern.
+    local details_dangerous_functions="" details_obfuscation=""
+    local details_user_input_sinks="" details_file_operations=""
+    local details_network_operations="" details_suspicious_strings=""
+    [[ $signals_dangerous_functions -gt 0 ]] && details_dangerous_functions=$(list_dangerous_functions "$content")
+    [[ $signals_obfuscation -gt 0 ]] && details_obfuscation=$(list_obfuscation "$content")
+    [[ $signals_user_input_sinks -gt 0 ]] && details_user_input_sinks=$(list_user_input_sinks "$content")
+    [[ $signals_file_operations -gt 0 ]] && details_file_operations=$(list_file_operations "$content")
+    [[ $signals_network_operations -gt 0 ]] && details_network_operations=$(list_network_operations "$content")
+    [[ $signals_suspicious_strings -gt 0 ]] && details_suspicious_strings=$(list_suspicious_strings "$content")
     
     # Calculate weighted score
     local score=0
@@ -114,7 +151,6 @@ json_escape_array() {
 
 count_dangerous_functions() {
     local content="$1"
-    local count=0
     local patterns=(
         '\beval\s*\('
         '\bexec\s*\('
@@ -130,12 +166,7 @@ count_dangerous_functions() {
         '\bcall_user_func_array\s*\('
         '\bpreg_replace\s*\('
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -oE "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any "$content" "${patterns[@]}"
 }
 
 list_dangerous_functions() {
@@ -169,7 +200,6 @@ list_dangerous_functions() {
 
 count_obfuscation() {
     local content="$1"
-    local count=0
     local patterns=(
         'eval\s*\(\s*base64_decode'
         'eval\s*\(\s*gzinflate'
@@ -185,12 +215,7 @@ count_obfuscation() {
         'str_rot13\s*\(\s*base64_decode'
         '\$_[A-Z]+\s*\[\s*['"'"'\"].*['"'"'\"]\s*\]\s*\(\s*base64_decode'
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -oE "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any "$content" "${patterns[@]}"
 }
 
 list_obfuscation() {
@@ -224,7 +249,6 @@ list_obfuscation() {
 
 count_user_input_sinks() {
     local content="$1"
-    local count=0
     # Direct superglobal to dangerous function
     local patterns=(
         '\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)\s*\[\s*['"'"'\"].*['"'"'\"]\s*\]\s*\(\s*\)'
@@ -237,12 +261,7 @@ count_user_input_sinks() {
         'popen\s*\(\s*\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)'
         'assert\s*\(\s*\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)'
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -oE "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any "$content" "${patterns[@]}"
 }
 
 list_user_input_sinks() {
@@ -271,7 +290,6 @@ list_user_input_sinks() {
 
 count_file_operations() {
     local content="$1"
-    local count=0
     local patterns=(
         'unlink\s*\(\s*\$_(GET|POST|REQUEST|FILES)'
         'mkdir\s*\(\s*\$_(GET|POST|REQUEST|FILES)'
@@ -289,12 +307,7 @@ count_file_operations() {
         'include_once\s*\(\s*\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)'
         'require_once\s*\(\s*\$_(GET|POST|REQUEST|COOKIE|SERVER|FILES)'
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -oE "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any "$content" "${patterns[@]}"
 }
 
 list_file_operations() {
@@ -322,7 +335,6 @@ list_file_operations() {
 
 count_network_operations() {
     local content="$1"
-    local count=0
     local patterns=(
         '\bcurl_init\s*\('
         '\bcurl_exec\s*\('
@@ -334,12 +346,7 @@ count_network_operations() {
         '\bfile_get_contents\s*\(\s*['"'"'\"](https?|ftp)://'
         '\breadfile\s*\(\s*['"'"'\"](https?|ftp)://'
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -oE "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any "$content" "${patterns[@]}"
 }
 
 list_network_operations() {
@@ -366,7 +373,6 @@ list_network_operations() {
 
 count_suspicious_strings() {
     local content="$1"
-    local count=0
     local patterns=(
         'shell' 'backdoor' 'rootkit' 'exploit' 'payload' 'c99' 'r57' 'wso'
         'b374k' 'alphashell' 'indoxploit' 'p0wny' 'webconsole' 'phpshell'
@@ -374,12 +380,7 @@ count_suspicious_strings() {
         'anonymous' 'lulzsec' 'antisec' 'bypass' 'disable_functions'
         'open_basedir' 'safe_mode' 'suhosin' 'ioncube' 'zend'
     )
-    for pattern in "${patterns[@]}"; do
-        local matches
-        matches=$(echo "$content" | grep -io "$pattern" | wc -l | tr -d '[:space:]')
-        count=$((count + matches))
-    done
-    echo "$count"
+    grep_count_any -i "$content" "${patterns[@]}"
 }
 
 list_suspicious_strings() {

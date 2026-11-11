@@ -71,7 +71,12 @@ cd "$1" 2>/dev/null || { echo MISSING; exit 0; }
 f=$(find . -type f | wc -l)
 l=$(find . -type l | wc -l)
 d=$(find . -type d | wc -l)
-b=$(find . -type f -printf '%s\n' | awk '{s+=$1} END {print s+0}')
+# stat -c is GNU, -f is BSD/macOS; pick whichever this host understands.
+if stat -c%s . >/dev/null 2>&1; then
+  b=$(find . -type f -exec stat -c%s {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+else
+  b=$(find . -type f -exec stat -f%z {} + 2>/dev/null | awk '{s+=$1} END {print s+0}')
+fi
 echo "$f $l $d $b"
 EOF
 )
@@ -443,7 +448,15 @@ echo
 
 # ---------- Storage on Destination ----------
 echo "${B}DESTINATION STORAGE${N}"
-read -r dev sz used avail mnt <<< "$(df -B1 --output=source,size,used,avail,target "$DST" 2>/dev/null | tail -n 1)"
+# GNU df -B1 gives exact bytes; POSIX/BSD df falls back to 1K blocks.
+if df -B1 --output=size "$DST" >/dev/null 2>&1; then
+  read -r dev sz used avail mnt <<< "$(df -B1 --output=source,size,used,avail,target "$DST" 2>/dev/null | tail -n 1)"
+else
+  read -r dev blocks usedblk availblk pct mnt <<< "$(df -Pk "$DST" 2>/dev/null | tail -n 1)"
+  sz=$(( ${blocks:-0} * 1024 ))
+  used=$(( ${usedblk:-0} * 1024 ))
+  avail=$(( ${availblk:-0} * 1024 ))
+fi
 
 if [ -z "${sz:-}" ]; then
   echo "${Y}Failed to read df for $DST${N}"

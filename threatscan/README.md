@@ -231,9 +231,6 @@ Signals:
 
 # Scan diff between two branches or tags
 ./threatscan.sh /project --git-diff main..release-candidate
-
-# Audit git commit history
-./threatscan.sh /project --git-history --git-since-date "30 days ago"
 ```
 
 ### 🔒 6. Quarantine Management

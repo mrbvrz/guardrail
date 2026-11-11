@@ -80,6 +80,23 @@ drain_batches() {
 # ============================================================================
 # BATCH PROCESSING
 # ============================================================================
+# A scanner result is reported as a finding unless it was scored CLEAN.
+is_finding() {
+    [[ "$1" =~ \"severity\":[[:space:]]*\"CLEAN\" ]] && return 1
+    return 0
+}
+
+# Heuristic scores below the threshold are noise and do not contribute.
+apply_heuristic_threshold() {
+    local score="$1" threshold="${2:-0}"
+    [[ "$score" =~ ^[0-9]+$ ]] || score=0
+    [[ "$threshold" =~ ^[0-9]+$ ]] || threshold=0
+    if [[ $score -lt $threshold ]]; then
+        score=0
+    fi
+    echo "$score"
+}
+
 scan_batch() {
     local batch_dir="$1"
     local yara_compiled="$2"
@@ -112,7 +129,12 @@ scan_batch() {
             log "WARN" "scan_single_file exited with code $ret for $file"
         fi
 
-        [[ -n "$result" ]] && batch_results+=("$result")
+        # Only non-clean results are findings. Clean files are accounted for by
+        # scan_info.total_files; emitting them inflates findings and makes
+        # SARIF/JUnit consumers report thousands of non-issues.
+        if [[ -n "$result" ]] && is_finding "$result"; then
+            batch_results+=("$result")
+        fi
         # One byte per finished file: the parent reads this to drive progress.
         printf '.' >> "${batch_dir}/progress.count" 2>/dev/null || true
     done
@@ -243,6 +265,11 @@ scan_single_file() {
     fi
 
     local final_score=$((base_score + yara_bonus + sig_bonus + entropy_bonus))
+    # The threshold only silences pure heuristic noise; a real signature, YARA
+    # match or high-entropy block must never be hidden by a low score.
+    if [[ $yara_count -eq 0 && $sig_count -eq 0 && $entropy_bonus -eq 0 ]]; then
+        final_score=$(apply_heuristic_threshold "$final_score" "${HEURISTIC_THRESHOLD:-0}")
+    fi
     [[ $final_score -gt 100 ]] && final_score=100
 
     local severity
@@ -284,6 +311,9 @@ run_signature_detection() {
     local content="$1"
     local file="$2"
     local results=()
+
+    # A function name mentioned in a comment is documentation, not code.
+    content=$(printf '%s\n' "$content" | strip_source_comments)
 
     # Known webshell signatures
     local webshell_names=(

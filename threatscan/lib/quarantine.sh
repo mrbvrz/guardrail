@@ -29,6 +29,10 @@ quarantine_file() {
     if [[ -n "$QUARANTINE_PASSWORD" ]]; then
         # ZIP with password
         if command -v zip >/dev/null 2>&1; then
+            # shortcut: zip only accepts the password as an argument, so it is
+            # visible in the process list for the lifetime of the command.
+            # Upgrade to 7z/openssl if that exposure matters on the host.
+            log "WARN" "Quarantine ZIP password is passed via argv (visible in ps)"
             zip -q -P "$QUARANTINE_PASSWORD" -j "${quarantine_path}.zip" "$file" 2>/dev/null
             rm -f "$file"
             quarantine_path="${quarantine_path}.zip"
@@ -62,59 +66,64 @@ METAEOF
 }
 
 restore_from_quarantine() {
-    local quarantine_file="$1"
-    [[ ! -f "$quarantine_file" ]] && { echo "Quarantine file not found: $quarantine_file" >&2; return 1; }
+    local quarantine_archive="$1"
+    [[ ! -f "$quarantine_archive" ]] && { echo "Quarantine file not found: $quarantine_archive" >&2; return 1; }
     
-    local meta_file="${quarantine_file}.meta.json"
+    local meta_file="${quarantine_archive}.meta.json"
     [[ ! -f "$meta_file" ]] && { echo "Metadata not found: $meta_file" >&2; return 1; }
     
-    local original_path
+    local original_path expected_hash
     original_path=$(jq -r '.original_path' "$meta_file" 2>/dev/null)
-    local password_protected
-    password_protected=$(jq -r '.password_protected' "$meta_file" 2>/dev/null)
+    expected_hash=$(jq -r '.hash // empty' "$meta_file" 2>/dev/null)
     
     [[ -z "$original_path" || "$original_path" == "null" ]] && { echo "Invalid metadata" >&2; return 1; }
+    # Refuse absolute or traversal paths from a metadata file that may have
+    # been edited: restore must stay inside the scan root.
+    case "$original_path" in
+        /*|..|../*|*/../*) echo "Unsafe original_path in metadata: $original_path" >&2; return 1 ;;
+    esac
     
     local restore_path="${PROJECT_ROOT}/${original_path}"
-    mkdir -p "$(dirname "$restore_path")"
-    
-    if [[ "$password_protected" == "true" && -n "$QUARANTINE_PASSWORD" ]]; then
-        if command -v unzip >/dev/null 2>&1; then
-            unzip -q -P "$QUARANTINE_PASSWORD" -o "$quarantine_file" -d "$(dirname "$restore_path")" 2>/dev/null
-            local extracted=$(basename "$quarantine_file" .quarantined.zip)
-            mv "$(dirname "$restore_path")/$extracted" "$restore_path" 2>/dev/null || true
-        else
+    local staging
+    staging=$(mktemp -d) || return 1
+
+    local source_file=""
+    if [[ "$quarantine_archive" == *.zip ]]; then
+        if ! command -v unzip >/dev/null 2>&1; then
             echo "unzip not available for password-protected restore" >&2
-            return 1
+            rm -rf "$staging"; return 1
         fi
+        # -P with an empty password is rejected by unzip; archives created
+        # without a password restore via the copy path below.
+        if ! unzip -q -P "${QUARANTINE_PASSWORD}" -o "$quarantine_archive" -d "$staging" 2>/dev/null; then
+            echo "Failed to extract quarantine archive (wrong password?)" >&2
+            rm -rf "$staging"; return 1
+        fi
+        source_file=$(find "$staging" -type f -print 2>/dev/null | head -1)
     else
-        cp "$quarantine_file" "$restore_path"
+        cp "$quarantine_archive" "${staging}/restored" && source_file="${staging}/restored"
     fi
+
+    if [[ -z "$source_file" ]]; then
+        echo "Quarantine archive contained no file" >&2
+        rm -rf "$staging"; return 1
+    fi
+
+    if [[ -n "$expected_hash" ]]; then
+        local actual_hash
+        actual_hash=$(get_file_hash "$source_file")
+        if [[ "$actual_hash" != "$expected_hash" ]]; then
+            echo "Hash mismatch (expected $expected_hash, got $actual_hash); refusing to restore" >&2
+            rm -rf "$staging"; return 1
+        fi
+    fi
+
+    mkdir -p "$(dirname "$restore_path")"
+    mv "$source_file" "$restore_path"
+    rm -rf "$staging"
     
     log "INFO" "Restored: $original_path from quarantine"
     echo "Restored to: $restore_path"
-}
-
-list_quarantine() {
-    [[ -z "$QUARANTINE_DIR" ]] && echo "[]" && return
-    [[ ! -d "$QUARANTINE_DIR" ]] && echo "[]" && return
-    
-    local results=()
-    while IFS= read -r -d '' meta_file; do
-        [[ -f "$meta_file" ]] || continue
-        local data
-        data=$(cat "$meta_file")
-        results+=("$data")
-    done < <(find "$QUARANTINE_DIR" -name "*.meta.json" -print0 2>/dev/null)
-    
-    local json="["
-    local first=true
-    for r in "${results[@]}"; do
-        [[ "$first" == "true" ]] && first=false || json+=","
-        json+="$r"
-    done
-    json+="]"
-    echo "$json"
 }
 
 should_quarantine() {

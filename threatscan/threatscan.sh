@@ -41,17 +41,13 @@ CUSTOM_RULES_DIR=""
 GIT_CHANGED_ONLY=false
 GIT_SINCE_COMMIT=""
 GIT_DIFF=""
-GIT_HISTORY=false
-GIT_SINCE_DATE=""
 WHITELIST_PATHS=("vendor/" "node_modules/" "storage/" ".git/" ".idea/" ".vscode/" "__pycache__/" ".next/" "dist/" "build/" "coverage/" ".cache/")
 WHITELIST_PATTERNS=("*.min.js" "*.bundle.js" "*.map" "*.min.css")
 WHITELIST_FILES=()
 MAX_FILE_SIZE="10MB"
-TIMEOUT=300
 FOLLOW_SYMLINKS=false
 CACHE_DIR=""
 INCREMENTAL=false
-STREAM_MODE=false
 BATCH_SIZE=100
 QUICK_MODE=false
 SIGNATURES_ONLY=false
@@ -60,10 +56,7 @@ COMPILE_YARA=false
 COMPILE_YARA_OUTPUT=""
 RESTORE_QUARANTINE=""
 VERBOSE=false
-THREAT_INTEL=false
-VT_API_KEY=""
-MALWAREBAZAAR=true
-CACHE_TTL=86400
+NO_YARA=false
 FAIL_ON="HIGH"
 PROGRESS=true
 QUIET=false
@@ -138,11 +131,13 @@ Target Discovery Options:
 Detection Options:
   --yara-rules DIRS      YARA rules directories (comma-separated)
   --yara-compiled FILE   Pre-compiled YARA rules file
+  --no-yara              Disable YARA even when the yara binary is installed
   --compile-yara DIRS    Compile YARA rules and exit
   --compile-yara-output  Output file for compiled rules
   --entropy-threshold N  Entropy threshold 0-8 (default: 7.5)
   --entropy-min-length N Min string length for entropy (default: 100)
-  --heuristic-threshold N Heuristic score threshold 0-100 (default: 70)
+  --heuristic-threshold N Minimum heuristic score that contributes to the
+                         final score; below it the heuristic is ignored (default: 70)
   --custom-rules DIR     Custom rules directory
   --signatures-only      Only signature-based detection
   --quick                Quick scan (signatures + heuristics only)
@@ -151,18 +146,14 @@ Performance Options:
   --threads N            Thread count (default: auto, max: 32)
   --cache-dir DIR        Cache directory for incremental scans
   --incremental          Use incremental scanning
-  --stream-mode          Stream processing for low memory
   --batch-size N         Files per batch (default: 100)
   --max-file-size SIZE   Max file size (default: 10MB)
-  --timeout SECS         Per-file timeout (default: 300)
   --follow-symlinks      Follow symbolic links
 
 Git Options:
   --git-changed          Scan only git-changed files
   --git-since COMMIT     Scan changes since commit
   --git-diff REF1..REF2  Scan diff between refs
-  --git-history          Scan entire git history
-  --git-since-date DATE  Scan history since date
 
 Output Options:
   --output FORMATS       Output formats: console,json,sarif,html,junit (comma-separated)
@@ -184,11 +175,8 @@ Whitelist Options:
   --whitelist-patterns PATTERNS Comma-separated glob patterns
   --whitelist-files FILES Comma-separated specific files
 
-Config & Threat Intel:
+Config Options:
   --config FILE          YAML/JSON config file
-  --threat-intel         Enable threat intelligence (VT, MalwareBazaar)
-  --vt-api-key KEY       VirusTotal API key
-  --cache-ttl SECS       Threat intel cache TTL (default: 86400)
 
 Utility:
   --check-deps           Check dependencies and exit
@@ -226,6 +214,10 @@ parse_args() {
             --yara-compiled)
                 YARA_COMPILED="$2"
                 shift 2
+                ;;
+            --no-yara)
+                NO_YARA=true
+                shift
                 ;;
             --compile-yara)
                 COMPILE_YARA=true
@@ -276,10 +268,6 @@ parse_args() {
                 INCREMENTAL=true
                 shift
                 ;;
-            --stream-mode)
-                STREAM_MODE=true
-                shift
-                ;;
             --batch-size)
                 BATCH_SIZE="$2"
                 shift 2
@@ -287,11 +275,6 @@ parse_args() {
             --max-file-size)
                 MAX_FILE_SIZE="$2"
                 mark_cli max_file_size
-                shift 2
-                ;;
-            --timeout)
-                TIMEOUT="$2"
-                mark_cli timeout
                 shift 2
                 ;;
             --follow-symlinks)
@@ -308,14 +291,6 @@ parse_args() {
                 ;;
             --git-diff)
                 GIT_DIFF="$2"
-                shift 2
-                ;;
-            --git-history)
-                GIT_HISTORY=true
-                shift
-                ;;
-            --git-since-date)
-                GIT_SINCE_DATE="$2"
                 shift 2
                 ;;
             --output)
@@ -377,18 +352,6 @@ parse_args() {
                 ;;
             --config)
                 CONFIG_FILE="$2"
-                shift 2
-                ;;
-            --threat-intel)
-                THREAT_INTEL=true
-                shift
-                ;;
-            --vt-api-key)
-                VT_API_KEY="$2"
-                shift 2
-                ;;
-            --cache-ttl)
-                CACHE_TTL="$2"
                 shift 2
                 ;;
             --check-deps)
@@ -480,8 +443,6 @@ parse_yaml_config() {
                 if ! cli_overrode heuristic_threshold; then HEURISTIC_THRESHOLD="$value"; fi ;;
             max_file_size)
                 if ! cli_overrode max_file_size; then MAX_FILE_SIZE="$value"; fi ;;
-            timeout)
-                if ! cli_overrode timeout; then TIMEOUT="$value"; fi ;;
             output_formats)
                 IFS=',' read -ra OUTPUT_FORMATS <<< "$value" ;;
             fail_on)
@@ -504,7 +465,6 @@ parse_json_config() {
         ENTROPY_THRESHOLD=$(jq -r '.detection.entropy.threshold // empty' "$file" 2>/dev/null || echo "$ENTROPY_THRESHOLD")
         HEURISTIC_THRESHOLD=$(jq -r '.detection.heuristics.threshold // empty' "$file" 2>/dev/null || echo "$HEURISTIC_THRESHOLD")
         MAX_FILE_SIZE=$(jq -r '.scanner.max_file_size // empty' "$file" 2>/dev/null || echo "$MAX_FILE_SIZE")
-        TIMEOUT=$(jq -r '.scanner.timeout // empty' "$file" 2>/dev/null || echo "$TIMEOUT")
         FAIL_ON=$(jq -r '.output.fail_on // empty' "$file" 2>/dev/null || echo "$FAIL_ON")
         QUARANTINE_DIR=$(jq -r '.quarantine.directory // empty' "$file" 2>/dev/null || echo "$QUARANTINE_DIR")
     fi
@@ -557,6 +517,21 @@ self_test() {
     shell_score=$(echo "$shell_heur" | jq -r '.score // 0')
     _t "$( [[ $shell_score -ge 50 ]] && echo yes || echo no )" "yes" "heuristics on eval(\$_POST['cmd']) flags high risk"
 
+    # Comment-only mentions are documentation, not executable code.
+    printf '%s\n' '<?php' '// exec payload shell command' '/* backdoor eval system */' 'echo "ok";' > "$tmp_dir/documented.php"
+    _t "$(analyze_heuristics "$tmp_dir/documented.php" | jq -r '.score // 0')" "0" "comment-only signal names do not score"
+
+    # Only non-clean results are findings
+    _t "$(is_finding '{"severity":"CLEAN"}' && echo yes || echo no)" "no" "clean result is not a finding"
+    _t "$(is_finding '{"severity":"HIGH"}' && echo yes || echo no)" "yes" "non-clean result is a finding"
+
+    # JSON embedded in the report must not be able to close its script tag
+    _t "$(json_for_script '{"file":"</script><b>x</b>"}')" '{"file":"\u003c/script>\u003cb>x\u003c/b>"}' "json_for_script neutralises </script>"
+
+    # A heuristic score below the threshold is ignored; at or above it counts.
+    _t "$(apply_heuristic_threshold 40 70)" "0" "heuristic score below threshold is dropped"
+    _t "$(apply_heuristic_threshold 80 70)" "80" "heuristic score above threshold is kept"
+
     # 4. Malicious .htaccess detection
     echo 'php_value auto_prepend_file "backdoor.php"' > "$tmp_dir/.htaccess"
     local htaccess_sig
@@ -590,6 +565,22 @@ self_test() {
 
     restore_from_quarantine "$q_path" >/dev/null 2>&1
     _t "$( [[ -f "$tmp_dir/shell.php" ]] && echo yes || echo no )" "yes" "restore_from_quarantine restores original file"
+
+    # Nested paths must survive the round trip, and a changed archive is refused.
+    mkdir -p "$tmp_dir/app/upload"
+    printf '<?php echo "x"; ?>\n' > "$tmp_dir/app/upload/x.php"
+    local nested_q
+    nested_q=$(quarantine_file "$tmp_dir/app/upload/x.php" "HIGH" "Self-test nested" 12345)
+    restore_from_quarantine "$nested_q" >/dev/null 2>&1
+    _t "$( [[ -f "$tmp_dir/app/upload/x.php" ]] && echo yes || echo no )" "yes" "restore keeps the nested original path"
+
+    # A metadata hash that does not match the archived bytes must stop restore.
+    rm -f "$tmp_dir/app/upload/x.php"
+    jq '.hash = "0000000000000000000000000000000000000000000000000000000000000000"' \
+        "${nested_q}.meta.json" > "${nested_q}.meta.json.tmp" && mv "${nested_q}.meta.json.tmp" "${nested_q}.meta.json"
+    local restore_rc=0
+    restore_from_quarantine "$nested_q" >/dev/null 2>&1 || restore_rc=$?
+    _t "$( [[ $restore_rc -ne 0 && ! -f "$tmp_dir/app/upload/x.php" ]] && echo yes || echo no )" "yes" "restore refuses a hash mismatch"
 
     # Cleanup
     rm -rf "$tmp_dir"
@@ -716,14 +707,21 @@ run_scan() {
     local batch_dir
     batch_dir=$(mktemp -d)
     
-    # Compile YARA if needed
+    # Compile YARA if needed. Built-in rules are used by default whenever the
+    # yara binary is present, so a plain scan is not silently signature-only.
     local yara_compiled=""
-    if [[ ${#YARA_RULES_DIRS[@]} -gt 0 ]] && [[ -z "$YARA_COMPILED" ]]; then
-        status "      compiling YARA rules..."
-        yara_compiled=$(compile_yara_rules "${YARA_RULES_DIRS[@]}") || yara_compiled=""
-        [[ -z "$yara_compiled" ]] && status "      ${YELLOW}YARA rules unavailable, continuing without them${NC}"
-    elif [[ -n "$YARA_COMPILED" ]]; then
-        yara_compiled="$YARA_COMPILED"
+    if [[ "$NO_YARA" != "true" && "$SIGNATURES_ONLY" != "true" && "$QUICK_MODE" != "true" ]]; then
+        if [[ -n "$YARA_COMPILED" ]]; then
+            yara_compiled="$YARA_COMPILED"
+        elif [[ ${#YARA_RULES_DIRS[@]} -gt 0 ]]; then
+            status "      compiling YARA rules..."
+            yara_compiled=$(compile_yara_rules "${YARA_RULES_DIRS[@]}") || yara_compiled=""
+            [[ -z "$yara_compiled" ]] && status "      ${YELLOW}YARA rules unavailable, continuing without them${NC}"
+        elif command -v yara >/dev/null 2>&1; then
+            status "      compiling built-in YARA rules..."
+            yara_compiled=$(compile_yara_rules) || yara_compiled=""
+            [[ -z "$yara_compiled" ]] && status "      ${YELLOW}YARA rules unavailable, continuing without them${NC}"
+        fi
     fi
     
     # Determine thread count
@@ -977,7 +975,6 @@ main() {
             [[ "$GIT_CHANGED_ONLY" == "true" ]] && echo -e "${CYAN}Git Mode:${NC} Changed files only"
             [[ -n "$GIT_SINCE_COMMIT" ]] && echo -e "${CYAN}Git Since:${NC} $GIT_SINCE_COMMIT"
             [[ -n "$GIT_DIFF" ]] && echo -e "${CYAN}Git Diff:${NC} $GIT_DIFF"
-            [[ "$GIT_HISTORY" == "true" ]] && echo -e "${CYAN}Git History:${NC} Enabled"
             [[ "$INCREMENTAL" == "true" ]] && echo -e "${CYAN}Incremental:${NC} Enabled"
             echo ""
         fi

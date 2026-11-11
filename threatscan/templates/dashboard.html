@@ -131,16 +131,25 @@
 
         function el(id) { return document.getElementById(id); }
 
+        // Every value below comes from scanned files, which may be attacker
+        // controlled (file names, signatures). Escape before innerHTML.
+        function esc(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function renderMeta() {
             const info = SCAN_INFO || {};
             const duration = typeof DURATION_MS === 'number'
                 ? DURATION_MS + ' ms' : 'n/a';
             el('reportMeta').innerHTML =
-                'Scan ID: ' + (info.scan_id || 'n/a') + '<br>' +
-                'Target: ' + (info.scanned_path || 'n/a') + '<br>' +
+                'Scan ID: ' + esc(info.scan_id || 'n/a') + '<br>' +
+                'Target: ' + esc(info.scanned_path || 'n/a') + '<br>' +
                 'Files scanned: ' + (info.total_files || 0) +
                 ' &middot; Duration: ' + duration +
-                ' &middot; Generated: ' + GENERATED_AT;
+                ' &middot; Generated: ' + esc(GENERATED_AT);
         }
 
         function renderSummary() {
@@ -189,7 +198,7 @@
         function signalBadges(heuristics) {
             return Object.keys(heuristics || {})
                 .filter(k => heuristics[k] && heuristics[k].count > 0)
-                .map(k => '<span class="badge">' + k + ': ' + heuristics[k].count + '</span>')
+                .map(k => '<span class="badge">' + esc(k) + ': ' + heuristics[k].count + '</span>')
                 .join('');
         }
 
@@ -202,13 +211,13 @@
             }
             tbody.innerHTML = FINDINGS.map((f, i) => {
                 const sev = (f.severity || 'CLEAN').toLowerCase();
-                const yara = (f.yara_matches || []).join(', ') || '-';
+                const yara = (f.yara_matches || []).map(esc).join(', ') || '-';
                 const entropy = Number((f.entropy || {}).max || 0).toFixed(2);
                 return '<tr onclick="showDetail(' + i + ')" style="cursor:pointer;">' +
                     '<td><a class="file-link" href="#" onclick="event.stopPropagation();showDetail(' + i + ')">' +
-                    f.file + '</a></td>' +
+                    esc(f.file) + '</a></td>' +
                     '<td class="score">' + (f.score || 0) + '</td>' +
-                    '<td><span class="severity severity-' + sev + '">' + (f.severity || 'CLEAN') + '</span></td>' +
+                    '<td><span class="severity severity-' + esc(sev) + '">' + esc(f.severity || 'CLEAN') + '</span></td>' +
                     '<td>' + yara + '</td>' +
                     '<td>' + entropy + '</td>' +
                     '<td>' + signalBadges(f.heuristics) + '</td>' +
@@ -222,9 +231,9 @@
             if (!keys.length) return '<p>No heuristic signals.</p>';
             let rows = keys.map(k => {
                 const d = heuristics[k] || {};
-                return '<tr><td>' + k + '</td><td>' + (d.count || 0) + '</td><td>' +
+                return '<tr><td>' + esc(k) + '</td><td>' + (d.count || 0) + '</td><td>' +
                     (d.weight || 0) + '</td><td>' + ((d.count || 0) * (d.weight || 0)) +
-                    '</td><td>' + ((d.details || []).join(', ') || '-') + '</td></tr>';
+                    '</td><td>' + (esc((d.details || []).join(', ')) || '-') + '</td></tr>';
             }).join('');
             return '<table><tr><th>Signal</th><th>Count</th><th>Weight</th>' +
                 '<th>Contribution</th><th>Details</th></tr>' + rows + '</table>';
@@ -237,18 +246,18 @@
             const ent = f.entropy || {};
 
             el('overview').innerHTML =
-                '<p><strong>Score:</strong> ' + (f.score || 0) + ' (' + (f.severity || 'CLEAN') + ')</p>' +
-                '<p><strong>Path:</strong> ' + (f.file || '') + '</p>' +
+                '<p><strong>Score:</strong> ' + (f.score || 0) + ' (' + esc(f.severity || 'CLEAN') + ')</p>' +
+                '<p><strong>Path:</strong> ' + esc(f.file || '') + '</p>' +
                 '<p><strong>Size:</strong> ' + (f.size || 0) + ' bytes</p>' +
-                '<p><strong>SHA-256:</strong> <code>' + (f.hash || 'n/a') + '</code></p>' +
-                '<p><strong>YARA:</strong> ' + ((f.yara_matches || []).join(', ') || 'none') + '</p>' +
+                '<p><strong>SHA-256:</strong> <code>' + esc(f.hash || 'n/a') + '</code></p>' +
+                '<p><strong>YARA:</strong> ' + (esc((f.yara_matches || []).join(', ')) || 'none') + '</p>' +
                 '<p><strong>Entropy:</strong> overall ' + Number(ent.overall || 0).toFixed(4) +
                 ', max ' + Number(ent.max || 0).toFixed(4) + '</p>' +
                 '<p><strong>Signatures:</strong> ' +
-                ((f.signatures || []).map(s => s.name || s.function || s.type || '').join(', ') || 'none') + '</p>';
+                (esc((f.signatures || []).map(s => s.name || s.function || s.type || '').join(', ')) || 'none') + '</p>';
 
             el('yara').innerHTML = (f.yara_matches || []).length
-                ? '<ul>' + f.yara_matches.map(m => '<li>' + m + '</li>').join('') + '</ul>'
+                ? '<ul>' + f.yara_matches.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul>'
                 : '<p>No YARA matches.</p>';
 
             el('entropy').innerHTML =
@@ -256,7 +265,7 @@
                 '<p><strong>Max window:</strong> ' + Number(ent.max || 0).toFixed(4) + '</p>' +
                 '<p><strong>Max base64 run:</strong> ' + Number(ent.b64_max || 0).toFixed(4) + '</p>' +
                 '<p><strong>High entropy sections:</strong> ' + (ent.sections || []).length + '</p>' +
-                '<pre>' + JSON.stringify(ent.sections || [], null, 2) + '</pre>';
+                '<pre>' + esc(JSON.stringify(ent.sections || [], null, 2)) + '</pre>';
 
             el('heuristics').innerHTML = renderHeuristicsTable(f.heuristics);
             el('code').innerHTML = '<p>Code view is not embedded in the report. Open the file on the scanned host to inspect it.</p>';

@@ -355,28 +355,3 @@ validate_threshold() {
     
     return 0
 }
-
-# ============================================================================
-# ARRAY HELPERS
-# ============================================================================
-array_contains() {
-    local needle="$1"
-    shift
-    for item in "$@"; do
-        [[ "$item" == "$needle" ]] && return 0
-    done
-    return 1
-}
-
-array_unique() {
-    local -n arr=$1
-    local seen=()
-    local unique=()
-    for item in "${arr[@]}"; do
-        if ! array_contains "$item" "${seen[@]}"; then
-            seen+=("$item")
-            unique+=("$item")
-        fi
-    done
-    arr=("${unique[@]}")
-}

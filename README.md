@@ -8,7 +8,7 @@
 
   ![Bash](https://img.shields.io/badge/Shell-Bash%203.2%2B-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
   ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-0078D4?style=flat-square&logo=linux&logoColor=white)
-  ![Formats](https://img.shields.io/badge/Reports-Console%20%7C%20HTML%20%7C%20JSON%20%7C%20SARIF%20%7C%20JUnit-6366F1?style=flat-square)
+  ![Formats](https://img.shields.io/badge/Reports%20(threatscan)-Console%20%7C%20HTML%20%7C%20JSON%20%7C%20SARIF%20%7C%20JUnit-6366F1?style=flat-square)
   ![License](https://img.shields.io/badge/Mode-Read--Only%20Audit-10B981?style=flat-square)
 </div>
 
